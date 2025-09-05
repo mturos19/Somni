@@ -24,7 +24,30 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const { toast } = useToast();
 
+  // Split story into words while preserving punctuation
   const words = story.split(/\s+/);
+  
+  // Calculate approximate reading speed adjustments
+  const getWordWeight = (word: string) => {
+    // Longer words take more time
+    let weight = Math.max(word.length / 5, 0.5);
+    
+    // Add time for punctuation pauses
+    if (word.match(/[.!?]$/)) weight += 0.8; // End of sentence
+    if (word.match(/[,;:]$/)) weight += 0.3; // Mid-sentence pause
+    if (word.match(/["'—]/)) weight += 0.1; // Quotes or em-dash
+    
+    return weight;
+  };
+
+  // Calculate cumulative weights for better timing
+  const wordWeights = words.map(getWordWeight);
+  const totalWeight = wordWeights.reduce((sum, weight) => sum + weight, 0);
+  const cumulativeWeights = wordWeights.reduce((acc, weight, index) => {
+    const previous = index > 0 ? acc[index - 1] : 0;
+    acc.push(previous + weight);
+    return acc;
+  }, [] as number[]);
 
   const generateSpeech = async () => {
     if (!elevenLabsApiKey || !voiceId) {
@@ -70,18 +93,26 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
       audioRef.current = audio;
 
       // Set up time update listener for karaoke effect
-      const totalDuration = await new Promise<number>((resolve) => {
+      await new Promise<void>((resolve) => {
         audio.addEventListener('loadedmetadata', () => {
-          resolve(audio.duration);
+          resolve();
         });
       });
 
-      const timePerWord = totalDuration / words.length;
+      // Add a small offset to account for the delay at the beginning of speech
+      const speechStartOffset = 0.5; // seconds
+      const effectiveDuration = audio.duration - speechStartOffset;
 
       audio.addEventListener('timeupdate', () => {
-        const currentTime = audio.currentTime;
-        const wordIndex = Math.floor(currentTime / timePerWord);
-        setCurrentWordIndex(Math.min(wordIndex, words.length - 1));
+        const currentTime = Math.max(0, audio.currentTime - speechStartOffset);
+        const progress = currentTime / effectiveDuration;
+        const targetWeight = progress * totalWeight;
+        
+        // Find which word we should be highlighting
+        let wordIndex = cumulativeWeights.findIndex(weight => weight > targetWeight);
+        if (wordIndex === -1) wordIndex = words.length - 1;
+        
+        setCurrentWordIndex(wordIndex);
       });
 
       audio.addEventListener('ended', () => {
@@ -127,13 +158,29 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
     }
   };
 
+  // Clean up audio URL when component unmounts or story changes
   useEffect(() => {
     return () => {
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);
       }
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
     };
   }, [audioUrl]);
+
+  // Reset when story changes
+  useEffect(() => {
+    setAudioUrl(null);
+    setCurrentWordIndex(-1);
+    setIsPlaying(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+  }, [story]);
 
   return (
     <Card className="shadow-dreamy border-primary/20">
@@ -182,7 +229,11 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
                   </>
                 )}
               </Button>
-              <Button onClick={stopStory} variant="outline" size="lg">
+              <Button
+                onClick={stopStory}
+                variant="outline"
+                size="lg"
+              >
                 <Square className="mr-2 h-4 w-4" />
                 Stop
               </Button>
@@ -201,7 +252,7 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
                     : index < currentWordIndex
                     ? 'text-primary/70'
                     : ''
-                } transition-all duration-300`}
+                } transition-all duration-200 ease-out`}
               >
                 {word}{' '}
               </span>
