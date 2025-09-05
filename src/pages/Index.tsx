@@ -12,8 +12,9 @@ const Index = () => {
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [currentStory, setCurrentStory] = useState({ title: '', content: '' });
 
-  const handleVoiceCloned = (voiceId: string) => {
+  const handleVoiceCloned = (voiceId: string, apiKey: string) => {
     setClonedVoiceId(voiceId);
+    setElevenLabsApiKey(apiKey);
   };
 
   const handleStoryGenerated = (story: string, title: string) => {
@@ -41,7 +42,7 @@ const Index = () => {
             <Star className="w-6 h-6 twinkling" />
           </div>
           <p className="text-lg md:text-xl font-comic opacity-90 max-w-2xl mx-auto">
-            Create magical, personalized bedtime stories with your own voice using AI
+            Create magical, personalized bedtime stories with AI voices
           </p>
           <div className="flex justify-center gap-2 mt-6">
             <Sparkles className="w-4 h-4 twinkling" />
@@ -53,10 +54,10 @@ const Index = () => {
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="clone" className="w-full max-w-4xl mx-auto">
+        <Tabs defaultValue="voice" className="w-full max-w-4xl mx-auto">
           <TabsList className="grid w-full grid-cols-4 mb-8">
-            <TabsTrigger value="clone" className="font-fredoka">
-              Clone Voice
+            <TabsTrigger value="voice" className="font-fredoka">
+              Select Voice
             </TabsTrigger>
             <TabsTrigger value="generate" className="font-fredoka">
               Create Story
@@ -69,14 +70,14 @@ const Index = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="clone" className="space-y-6">
+          <TabsContent value="voice" className="space-y-6">
             <VoiceCloning 
               onVoiceCloned={handleVoiceCloned}
             />
             {clonedVoiceId && (
               <div className="text-center p-4 bg-primary/10 rounded-lg border border-primary/20">
                 <p className="text-primary font-fredoka font-medium">
-                  ✨ Voice cloned successfully! Voice ID: {clonedVoiceId}
+                  ✨ Voice selected successfully! Ready to create stories.
                 </p>
               </div>
             )}

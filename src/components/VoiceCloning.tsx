@@ -1,115 +1,106 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Mic, MicOff, Upload, Wand2 } from 'lucide-react';
+import { Wand2, Volume2 } from 'lucide-react';
 import magicMicIcon from '@/assets/magic-mic-icon.png';
 
 interface VoiceCloningProps {
-  onVoiceCloned: (voiceId: string) => void;
+  onVoiceCloned: (voiceId: string, apiKey: string) => void;
 }
 
+// Default ElevenLabs voices that work with free tier
+const DEFAULT_VOICES = [
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Calm and soothing female voice' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', description: 'Warm and friendly female voice' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', description: 'Gentle male voice' },
+  { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold', description: 'Deep and reassuring male voice' },
+  { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Clear and articulate male voice' },
+  { id: 'Yko7PKHZNXotIFUBG7I9', name: 'Domi', description: 'Young and energetic female voice' },
+  { id: 'zrHiDhphv9ZnVXBqCLjz', name: 'Mimi', description: 'Childlike and playful female voice' },
+];
+
 export const VoiceCloning: React.FC<VoiceCloningProps> = ({ onVoiceCloned }) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [apiKey, setApiKey] = useState('');
-  const [voiceName, setVoiceName] = useState('');
-  const [isCloning, setIsCloning] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState('');
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
   const { toast } = useToast();
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      chunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/wav' });
-        setAudioBlob(blob);
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorderRef.current.start();
-      setIsRecording(true);
-      toast({
-        title: "Recording started",
-        description: "Speak clearly for at least 30 seconds for best results",
-      });
-    } catch (error) {
-      toast({
-        title: "Recording failed",
-        description: "Could not access microphone. Please check permissions.",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      toast({
-        title: "Recording completed",
-        description: "Audio captured successfully!",
-      });
-    }
-  };
-
-  const cloneVoice = async () => {
-    if (!audioBlob || !apiKey || !voiceName) {
+  const handleVoiceSelection = () => {
+    if (!apiKey || !selectedVoice) {
       toast({
         title: "Missing information",
-        description: "Please provide API key, voice name, and record audio",
+        description: "Please provide API key and select a voice",
         variant: "destructive"
       });
       return;
     }
 
-    setIsCloning(true);
+    // Pass both voice ID and API key
+    onVoiceCloned(selectedVoice, apiKey);
     
-    try {
-      const formData = new FormData();
-      formData.append('files', audioBlob, 'recording.wav');
-      formData.append('name', voiceName);
-      formData.append('description', `Cloned voice for bedtime stories - ${voiceName}`);
+    const voiceName = DEFAULT_VOICES.find(v => v.id === selectedVoice)?.name || 'Selected voice';
+    toast({
+      title: "Voice selected successfully!",
+      description: `${voiceName} is ready to tell bedtime stories`,
+    });
+  };
 
-      const response = await fetch('https://api.elevenlabs.io/v1/voices/add', {
+  const testVoice = async () => {
+    if (!apiKey || !selectedVoice) {
+      toast({
+        title: "Missing information",
+        description: "Please provide API key and select a voice",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsTestingVoice(true);
+
+    try {
+      const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${selectedVoice}`, {
         method: 'POST',
         headers: {
           'xi-api-key': apiKey,
+          'Content-Type': 'application/json',
         },
-        body: formData,
+        body: JSON.stringify({
+          text: "Once upon a time, in a magical forest filled with twinkling stars...",
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: {
+            stability: 0.5,
+            similarity_boost: 0.75,
+            style: 0.0,
+            use_speaker_boost: true
+          }
+        }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to clone voice');
+        throw new Error('Failed to generate test speech');
       }
 
-      const result = await response.json();
-      onVoiceCloned(result.voice_id);
-      
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      await audio.play();
+
       toast({
-        title: "Voice cloned successfully!",
-        description: `${voiceName} is ready to tell bedtime stories`,
+        title: "Voice preview playing",
+        description: "Listen to how the stories will sound",
       });
     } catch (error) {
       toast({
-        title: "Voice cloning failed",
+        title: "Test failed",
         description: "Please check your API key and try again",
         variant: "destructive"
       });
     } finally {
-      setIsCloning(false);
+      setIsTestingVoice(false);
     }
   };
 
@@ -119,9 +110,9 @@ export const VoiceCloning: React.FC<VoiceCloningProps> = ({ onVoiceCloned }) => 
         <div className="flex items-center gap-3">
           <img src={magicMicIcon} alt="Magic Microphone" className="w-8 h-8 floating" />
           <div>
-            <CardTitle className="magical-text">Clone Your Voice</CardTitle>
+            <CardTitle className="magical-text">Select Story Voice</CardTitle>
             <CardDescription>
-              Record your voice to create personalized bedtime stories
+              Choose a magical voice for your bedtime stories
             </CardDescription>
           </div>
         </div>
@@ -136,78 +127,67 @@ export const VoiceCloning: React.FC<VoiceCloningProps> = ({ onVoiceCloned }) => 
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
           />
+          <p className="text-xs text-muted-foreground">
+            Works with free tier API keys - no voice cloning needed!
+          </p>
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="voice-name">Voice Name</Label>
-          <Input
-            id="voice-name"
-            placeholder="Mom's Bedtime Voice"
-            value={voiceName}
-            onChange={(e) => setVoiceName(e.target.value)}
-          />
+          <Label htmlFor="voice-select">Choose a Voice</Label>
+          <Select value={selectedVoice} onValueChange={setSelectedVoice}>
+            <SelectTrigger id="voice-select">
+              <SelectValue placeholder="Select a storyteller voice" />
+            </SelectTrigger>
+            <SelectContent>
+              {DEFAULT_VOICES.map((voice) => (
+                <SelectItem key={voice.id} value={voice.id}>
+                  <div className="flex flex-col items-start">
+                    <span className="font-medium">{voice.name}</span>
+                    <span className="text-xs text-muted-foreground">{voice.description}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        <div className="flex flex-col items-center space-y-4 p-6 bg-secondary/30 rounded-xl">
-          <div className="text-center">
-            <h3 className="font-fredoka font-medium text-lg mb-2">Record Your Voice</h3>
-            <p className="text-muted-foreground text-sm">
-              Speak naturally for 30-60 seconds. Read a short story or talk about your day.
-            </p>
-          </div>
-          
-          <div className="flex gap-4">
-            {!isRecording ? (
-              <Button
-                onClick={startRecording}
-                variant="magical"
-                size="lg"
-                disabled={!apiKey || !voiceName}
-              >
-                <Mic className="mr-2 h-5 w-5" />
-                Start Recording
-              </Button>
+        <div className="flex gap-4">
+          <Button
+            onClick={testVoice}
+            variant="outline"
+            disabled={!apiKey || !selectedVoice || isTestingVoice}
+            className="flex-1"
+          >
+            {isTestingVoice ? (
+              <>
+                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                Testing...
+              </>
             ) : (
-              <Button
-                onClick={stopRecording}
-                variant="destructive"
-                size="lg"
-                className="animate-pulse"
-              >
-                <MicOff className="mr-2 h-5 w-5" />
-                Stop Recording
-              </Button>
+              <>
+                <Volume2 className="mr-2 h-4 w-4" />
+                Test Voice
+              </>
             )}
-          </div>
+          </Button>
 
-          {audioBlob && (
-            <div className="w-full max-w-md">
-              <audio controls className="w-full">
-                <source src={URL.createObjectURL(audioBlob)} type="audio/wav" />
-              </audio>
-            </div>
-          )}
+          <Button
+            onClick={handleVoiceSelection}
+            variant="dreamy"
+            disabled={!apiKey || !selectedVoice}
+            className="flex-1"
+          >
+            <Wand2 className="mr-2 h-5 w-5" />
+            Use This Voice
+          </Button>
         </div>
 
-        <Button
-          onClick={cloneVoice}
-          variant="dreamy"
-          size="lg"
-          className="w-full"
-          disabled={!audioBlob || !apiKey || !voiceName || isCloning}
-        >
-          {isCloning ? (
-            <>
-              <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              Cloning Voice...
-            </>
-          ) : (
-            <>
-              <Wand2 className="mr-2 h-5 w-5" />
-              Clone Voice
-            </>
-          )}
-        </Button>
+        <div className="p-4 bg-secondary/30 rounded-lg">
+          <p className="text-sm text-muted-foreground">
+            <strong>Tip:</strong> These voices work with free ElevenLabs accounts. 
+            For personalized voice cloning, upgrade to a paid plan.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
