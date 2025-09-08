@@ -135,10 +135,42 @@ export const StoryPlayer: React.FC<StoryPlayerProps> = ({
     }
   };
 
-  const playStory = () => {
+  const playStory = async () => {
+    console.log('Play button clicked', {
+      hasAudioRef: !!audioRef.current,
+      hasAudioUrl: !!audioUrl
+    });
+    
+    // If we have audioUrl but no audioRef, recreate the audio element
+    if (audioUrl && !audioRef.current) {
+      console.log('Recreating audio element from URL');
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      
+      // Add basic event listeners
+      audio.addEventListener('ended', () => {
+        setIsPlaying(false);
+      });
+    }
+    
     if (audioRef.current) {
-      audioRef.current.play();
-      setIsPlaying(true);
+      try {
+        await audioRef.current.play();
+        setIsPlaying(true);
+      } catch (error) {
+        console.error('Playback error:', error);
+        toast({
+          title: "Playback failed",
+          description: "Unable to play audio. Try clicking again or regenerate the story.",
+          variant: "destructive"
+        });
+      }
+    } else {
+      toast({
+        title: "No audio ready",
+        description: "Please prepare the story first",
+        variant: "destructive"
+      });
     }
   };
 
