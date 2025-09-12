@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { VoiceCloning } from '@/components/VoiceCloning';
 import { StoryGenerator } from '@/components/StoryGenerator';
 import { StoryPlayer } from '@/components/StoryPlayer';
 import { StoryLibrary } from '@/components/StoryLibrary';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Moon, Star, Sparkles } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Moon, Star, Sparkles, LogIn, User } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import heroBedtime from '@/assets/hero-bedtime.jpg';
 
 const Index = () => {
   const [clonedVoiceId, setClonedVoiceId] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [currentStory, setCurrentStory] = useState({ title: '', content: '' });
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   const handleVoiceCloned = (voiceId: string, apiKey: string) => {
     setClonedVoiceId(voiceId);
@@ -33,6 +38,42 @@ const Index = () => {
         style={{ backgroundImage: `url(${heroBedtime})` }}
       >
         <div className="absolute inset-0 bg-gradient-to-b from-night-sky/30 to-night-sky/60"></div>
+        
+        {/* User Menu */}
+        <div className="absolute top-4 right-4 z-20">
+          {user ? (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm rounded-full px-3 py-2">
+                <div className="w-6 h-6 rounded-full bg-gradient-magical flex items-center justify-center">
+                  <User className="w-3 h-3 text-white" />
+                </div>
+                <span className="text-white text-sm font-medium hidden sm:block">
+                  {user.name}
+                </span>
+              </div>
+              <Button
+                onClick={() => navigate('/login')}
+                variant="outline"
+                size="sm"
+                className="bg-white/20 backdrop-blur-sm border-white/30 text-white hover:bg-white/30"
+              >
+                <User className="w-4 h-4 mr-2" />
+                My Account
+              </Button>
+            </div>
+          ) : (
+            <Button
+              onClick={() => navigate('/login')}
+              variant="outline"
+              size="sm"
+              className="bg-white/20 backdrop-blur-sm border-white/30 text-white hover:bg-white/30"
+            >
+              <LogIn className="w-4 h-4 mr-2" />
+              Sign In
+            </Button>
+          )}
+        </div>
+
         <div className="relative text-center text-white z-10 px-4">
           <div className="flex items-center justify-center gap-3 mb-4">
             <Moon className="w-8 h-8 floating" />
