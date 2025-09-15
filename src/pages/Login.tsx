@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 import { Moon, Star, Sparkles, LogIn, Shield, User, Lock, Eye, EyeOff } from 'lucide-react';
 import heroBedtime from '@/assets/hero-bedtime.jpg';
 
@@ -23,7 +24,6 @@ interface StoredUser {
 
 const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -31,6 +31,11 @@ const Login: React.FC = () => {
   const [name, setName] = useState('');
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, login } = useAuth();
+  
+  // Get the page user was trying to access
+  const from = location.state?.from?.pathname || '/';
 
   // Helper functions for credential management
   const getStoredUsers = (): StoredUser[] => {
@@ -49,11 +54,11 @@ const Login: React.FC = () => {
 
   // Check if user is already logged in
   React.useEffect(() => {
-    const savedUser = localStorage.getItem('user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
+    if (user) {
+      // If user is already logged in, redirect to main app
+      navigate(from, { replace: true });
     }
-  }, []);
+  }, [user, from, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,18 +107,15 @@ const Login: React.FC = () => {
         email: storedUser.email
       };
 
-      setUser(userData);
-      localStorage.setItem('user', JSON.stringify(userData));
+      // Use AuthContext login method
+      login(userData);
 
       toast({
         title: "Welcome back! ✨",
         description: `Hello ${userData.name}, ready for magical bedtime stories?`,
       });
 
-      // Redirect to main app
-      setTimeout(() => {
-        navigate('/');
-      }, 1500);
+      // The redirect will happen automatically via useEffect when user state updates
 
     } catch (error) {
       toast({
@@ -175,18 +177,15 @@ const Login: React.FC = () => {
         email: newUser.email
       };
 
-      setUser(userData);
-      localStorage.setItem('user', JSON.stringify(userData));
+      // Use AuthContext login method
+      login(userData);
 
       toast({
         title: "Account created! ✨",
         description: `Welcome ${userData.name}, let's create magical stories!`,
       });
 
-      // Redirect to main app
-      setTimeout(() => {
-        navigate('/');
-      }, 1500);
+      // The redirect will happen automatically via useEffect when user state updates
 
     } catch (error) {
       toast({
@@ -199,15 +198,6 @@ const Login: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    localStorage.removeItem('user');
-    
-    toast({
-      title: "Logged out",
-      description: "See you next time for more magical stories!",
-    });
-  };
 
   return (
     <div className="min-h-screen bg-gradient-starry">
@@ -239,45 +229,6 @@ const Login: React.FC = () => {
       {/* Login Content */}
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-md mx-auto">
-          {user ? (
-            <Card className="shadow-dreamy border-primary/20">
-              <CardHeader className="text-center">
-                <div className="flex items-center justify-center gap-3 mb-4">
-                  <div className="w-16 h-16 rounded-full border-2 border-primary/30 bg-gradient-magical flex items-center justify-center">
-                    <User className="w-8 h-8 text-white" />
-                  </div>
-                </div>
-                <CardTitle className="magical-text">Welcome back!</CardTitle>
-                <CardDescription className="text-lg">
-                  Hello, {user.name}! ✨
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="p-4 bg-secondary/30 rounded-lg">
-                  <p className="text-sm text-muted-foreground text-center">
-                    You're all set to create magical bedtime stories!
-                  </p>
-                </div>
-                <div className="flex gap-4">
-                  <Button
-                    onClick={() => navigate('/')}
-                    variant="dreamy"
-                    className="flex-1"
-                  >
-                    <LogIn className="mr-2 h-4 w-4" />
-                    Go to Stories
-                  </Button>
-                  <Button
-                    onClick={handleLogout}
-                    variant="outline"
-                    className="flex-1"
-                  >
-                    Sign Out
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
             <Card className="shadow-dreamy border-primary/20">
               <CardHeader className="text-center">
                 <div className="flex items-center justify-center gap-3 mb-4">
@@ -399,7 +350,6 @@ const Login: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
-          )}
         </div>
       </div>
 
