@@ -9,18 +9,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Moon, Star, Sparkles, LogIn, Shield, User, Lock, Eye, EyeOff } from 'lucide-react';
 import heroBedtime from '@/assets/hero-bedtime.jpg';
 
-interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-
-interface StoredUser {
-  id: string;
-  name: string;
-  email: string;
-  password: string; // In a real app, this would be hashed
-}
 
 const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -32,25 +20,11 @@ const Login: React.FC = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, login } = useAuth();
+  const { user, signIn, signUp } = useAuth();
   
   // Get the page user was trying to access
   const from = location.state?.from?.pathname || '/';
 
-  // Helper functions for credential management
-  const getStoredUsers = (): StoredUser[] => {
-    const stored = localStorage.getItem('storedUsers');
-    return stored ? JSON.parse(stored) : [];
-  };
-
-  const saveStoredUsers = (users: StoredUser[]) => {
-    localStorage.setItem('storedUsers', JSON.stringify(users));
-  };
-
-  const findUserByEmail = (email: string): StoredUser | null => {
-    const users = getStoredUsers();
-    return users.find(user => user.email.toLowerCase() === email.toLowerCase()) || null;
-  };
 
   // Check if user is already logged in
   React.useEffect(() => {
@@ -75,44 +49,21 @@ const Login: React.FC = () => {
         return;
       }
 
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Find user by email
-      const storedUser = findUserByEmail(email);
+      // Sign in with Supabase
+      const { error } = await signIn(email, password);
       
-      if (!storedUser) {
+      if (error) {
         toast({
-          title: "User not found",
-          description: "No account found with this email address. Please sign up first.",
+          title: "Login failed",
+          description: error,
           variant: "destructive"
         });
         return;
       }
-
-      // Check password
-      if (storedUser.password !== password) {
-        toast({
-          title: "Invalid password",
-          description: "The password you entered is incorrect.",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      // Create user session (without password)
-      const userData: User = {
-        id: storedUser.id,
-        name: storedUser.name,
-        email: storedUser.email
-      };
-
-      // Use AuthContext login method
-      login(userData);
 
       toast({
         title: "Welcome back! ✨",
-        description: `Hello ${userData.name}, ready for magical bedtime stories?`,
+        description: "Ready for magical bedtime stories?",
       });
 
       // The redirect will happen automatically via useEffect when user state updates
@@ -143,46 +94,21 @@ const Login: React.FC = () => {
         return;
       }
 
-      // Check if email already exists
-      const existingUser = findUserByEmail(email);
-      if (existingUser) {
+      // Sign up with Supabase
+      const { error } = await signUp(email, password, name);
+      
+      if (error) {
         toast({
-          title: "Email already exists",
-          description: "An account with this email already exists. Please sign in instead.",
+          title: "Sign up failed",
+          description: error,
           variant: "destructive"
         });
         return;
       }
 
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Create new user
-      const newUser: StoredUser = {
-        id: Date.now().toString(),
-        name: name.trim(),
-        email: email.toLowerCase().trim(),
-        password: password // In a real app, this would be hashed
-      };
-
-      // Save to stored users
-      const users = getStoredUsers();
-      users.push(newUser);
-      saveStoredUsers(users);
-
-      // Create user session (without password)
-      const userData: User = {
-        id: newUser.id,
-        name: newUser.name,
-        email: newUser.email
-      };
-
-      // Use AuthContext login method
-      login(userData);
-
       toast({
         title: "Account created! ✨",
-        description: `Welcome ${userData.name}, let's create magical stories!`,
+        description: `Welcome ${name}, let's create magical stories!`,
       });
 
       // The redirect will happen automatically via useEffect when user state updates

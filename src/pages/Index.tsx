@@ -14,7 +14,7 @@ const Index = () => {
   const [clonedVoiceId, setClonedVoiceId] = useState('');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [currentStory, setCurrentStory] = useState({ title: '', content: '' });
-  const { user, logout } = useAuth();
+  const { user, signOut } = useAuth();
   const navigate = useNavigate();
 
   const handleVoiceCloned = (voiceId: string, apiKey: string) => {
@@ -51,8 +51,8 @@ const Index = () => {
               </span>
             </div>
             <Button
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                await signOut();
                 navigate('/login');
               }}
               variant="outline"

@@ -1,14 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BookOpen, Trash2, Play } from 'lucide-react';
+import { BookOpen, Trash2, Play, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Story {
   id: string;
+  user_id: string;
   title: string;
   content: string;
-  createdAt: string;
+  theme?: string;
+  child_name?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface StoryLibraryProps {
@@ -21,64 +27,125 @@ export const StoryLibrary: React.FC<StoryLibraryProps> = ({
   currentStory 
 }) => {
   const [stories, setStories] = useState<Story[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
-    loadStories();
-  }, []);
+    if (user) {
+      loadStories();
+    }
+  }, [user]);
 
   useEffect(() => {
     // Save current story if it exists
-    if (currentStory && currentStory.title && currentStory.content) {
+    if (currentStory && currentStory.title && currentStory.content && user) {
       saveCurrentStory();
     }
-  }, [currentStory]);
+  }, [currentStory, user]);
 
-  const loadStories = () => {
-    const savedStories = localStorage.getItem('bedtime-stories');
-    if (savedStories) {
-      setStories(JSON.parse(savedStories));
+  const loadStories = async () => {
+    if (!user) return;
+    
+    setIsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('stories')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw error;
+      }
+
+      setStories(data || []);
+    } catch (error: any) {
+      console.error('Error loading stories:', error);
+      toast({
+        title: "Failed to load stories",
+        description: error.message || "Unable to fetch your stories",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const saveCurrentStory = () => {
-    if (!currentStory) return;
-
-    const storyId = `story-${Date.now()}`;
-    const newStory: Story = {
-      id: storyId,
-      title: currentStory.title,
-      content: currentStory.content,
-      createdAt: new Date().toISOString(),
-    };
+  const saveCurrentStory = async () => {
+    if (!currentStory || !user) return;
 
     // Check if story already exists (avoid duplicates)
-    const existingStories = JSON.parse(localStorage.getItem('bedtime-stories') || '[]');
-    const isDuplicate = existingStories.some((story: Story) => 
-      story.content === newStory.content
+    const isDuplicate = stories.some((story) => 
+      story.content === currentStory.content
     );
 
     if (!isDuplicate) {
-      const updatedStories = [newStory, ...existingStories];
-      localStorage.setItem('bedtime-stories', JSON.stringify(updatedStories));
-      setStories(updatedStories);
-      
-      toast({
-        title: "Story saved!",
-        description: `"${newStory.title}" has been added to your library`,
-      });
+      setIsSaving(true);
+      try {
+        const { data, error } = await supabase
+          .from('stories')
+          .insert({
+            user_id: user.id,
+            title: currentStory.title,
+            content: currentStory.content
+          })
+          .select()
+          .single();
+
+        if (error) {
+          throw error;
+        }
+
+        if (data) {
+          setStories([data, ...stories]);
+          toast({
+            title: "Story saved!",
+            description: `"${data.title}" has been added to your library`,
+          });
+        }
+      } catch (error: any) {
+        console.error('Error saving story:', error);
+        toast({
+          title: "Failed to save story",
+          description: error.message || "Unable to save your story",
+          variant: "destructive"
+        });
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
-  const deleteStory = (storyId: string) => {
-    const updatedStories = stories.filter(story => story.id !== storyId);
-    setStories(updatedStories);
-    localStorage.setItem('bedtime-stories', JSON.stringify(updatedStories));
-    
-    toast({
-      title: "Story deleted",
-      description: "The story has been removed from your library",
-    });
+  const deleteStory = async (storyId: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('stories')
+        .delete()
+        .eq('id', storyId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        throw error;
+      }
+
+      setStories(stories.filter(story => story.id !== storyId));
+      
+      toast({
+        title: "Story deleted",
+        description: "The story has been removed from your library",
+      });
+    } catch (error: any) {
+      console.error('Error deleting story:', error);
+      toast({
+        title: "Failed to delete story",
+        description: error.message || "Unable to delete the story",
+        variant: "destructive"
+      });
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -103,7 +170,14 @@ export const StoryLibrary: React.FC<StoryLibraryProps> = ({
         </div>
       </CardHeader>
       <CardContent>
-        {stories.length === 0 ? (
+        {isLoading ? (
+          <div className="text-center py-8">
+            <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
+            <p className="text-muted-foreground">
+              Loading your magical stories...
+            </p>
+          </div>
+        ) : stories.length === 0 ? (
           <div className="text-center py-8">
             <BookOpen className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
             <p className="text-muted-foreground">
@@ -123,7 +197,7 @@ export const StoryLibrary: React.FC<StoryLibraryProps> = ({
                       {story.title}
                     </h3>
                     <p className="text-xs text-muted-foreground mb-2">
-                      {formatDate(story.createdAt)}
+                      {formatDate(story.created_at)}
                     </p>
                     <p className="text-xs text-muted-foreground line-clamp-2">
                       {story.content.substring(0, 100)}...
