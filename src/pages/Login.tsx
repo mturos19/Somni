@@ -46,16 +46,25 @@ const Login: React.FC = () => {
           description: "Please fill in all fields",
           variant: "destructive"
         });
+        setIsLoading(false);
         return;
       }
 
+      // Add timeout to prevent infinite loading
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Login timeout - check your connection')), 15000)
+      );
+
       // Sign in with Supabase
-      const { error } = await signIn(email, password);
+      const result = await Promise.race([
+        signIn(email, password),
+        timeoutPromise
+      ]) as { error?: string };
       
-      if (error) {
+      if (result.error) {
         toast({
           title: "Login failed",
-          description: error,
+          description: result.error,
           variant: "destructive"
         });
         return;
@@ -68,10 +77,10 @@ const Login: React.FC = () => {
 
       // The redirect will happen automatically via useEffect when user state updates
 
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Login failed",
-        description: "Something went wrong. Please try again.",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -91,16 +100,25 @@ const Login: React.FC = () => {
           description: "Please fill in all fields",
           variant: "destructive"
         });
+        setIsLoading(false);
         return;
       }
 
+      // Add timeout to prevent infinite loading
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Signup timeout - check your connection')), 15000)
+      );
+
       // Sign up with Supabase
-      const { error } = await signUp(email, password, name);
+      const result = await Promise.race([
+        signUp(email, password, name),
+        timeoutPromise
+      ]) as { error?: string };
       
-      if (error) {
+      if (result.error) {
         toast({
           title: "Sign up failed",
-          description: error,
+          description: result.error,
           variant: "destructive"
         });
         return;
@@ -113,10 +131,10 @@ const Login: React.FC = () => {
 
       // The redirect will happen automatically via useEffect when user state updates
 
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Sign up failed",
-        description: "Something went wrong. Please try again.",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive"
       });
     } finally {
@@ -252,7 +270,10 @@ const Login: React.FC = () => {
                 <div className="text-center">
                   <button
                     type="button"
-                    onClick={() => setIsSignUp(!isSignUp)}
+                    onClick={() => {
+                      setIsSignUp(!isSignUp);
+                      setIsLoading(false);  // Reset loading state when switching modes
+                    }}
                     className="text-sm text-primary hover:underline"
                   >
                     {isSignUp 
