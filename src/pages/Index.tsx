@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Moon, Star, Sparkles, User, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { SubscriptionStatus } from '@/components/SubscriptionStatus';
 import heroBedtime from '@/assets/hero-bedtime.jpg';
 
 const Index = () => {
@@ -86,7 +87,11 @@ const Index = () => {
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="voice" className="w-full max-w-4xl mx-auto">
+        <div className="w-full max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            {/* Main content column */}
+            <div className="lg:col-span-3">
+              <Tabs defaultValue="voice" className="w-full">
           <TabsList className="grid w-full grid-cols-4 mb-8">
             <TabsTrigger value="voice" className="font-fredoka">
               Select Voice
@@ -147,6 +152,14 @@ const Index = () => {
             />
           </TabsContent>
         </Tabs>
+            </div>
+
+            {/* Subscription Status Sidebar */}
+            <div className="lg:col-span-1">
+              <SubscriptionStatus />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Footer */}

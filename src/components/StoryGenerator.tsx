@@ -5,8 +5,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { BookOpen, Sparkles, Wand2 } from 'lucide-react';
+import { BookOpen, Sparkles, Wand2, AlertCircle } from 'lucide-react';
 import magicBookIcon from '@/assets/magic-book-icon.png';
+import { useSubscription } from '@/contexts/SubscriptionContext';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface StoryGeneratorProps {
   onStoryGenerated: (story: string, title: string) => void;
@@ -19,12 +21,22 @@ export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onStoryGenerated
   const [customPrompt, setCustomPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const { toast } = useToast();
+  const { subscription, usage, canGenerateStory, trackUsage } = useSubscription();
 
   const generateStory = async () => {
     if (!apiKey || !childName) {
       toast({
         title: "Missing information",
         description: "Please provide your OpenAI API key and child's name",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!canGenerateStory) {
+      toast({
+        title: "Story limit reached",
+        description: "You've reached your monthly story limit. Upgrade your plan for more stories!",
         variant: "destructive"
       });
       return;
@@ -88,6 +100,13 @@ export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onStoryGenerated
       const titleResult = await titleResponse.json();
       const title = titleResult.choices[0].message.content.replace(/['"]/g, '');
 
+      // Track usage
+      await trackUsage('story_generated', {
+        title,
+        theme: storyTheme,
+        child_name: childName
+      });
+
       onStoryGenerated(story, title);
       
       toast({
@@ -128,6 +147,25 @@ export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onStoryGenerated
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {/* Usage Alert */}
+        {usage && usage.remainingStories <= 3 && usage.remainingStories > 0 && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              You have {usage.remainingStories} {usage.remainingStories === 1 ? 'story' : 'stories'} remaining this month.
+              {subscription?.tierName === 'free' && ' Upgrade for more!'}
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {!canGenerateStory && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              You've reached your monthly story limit. Upgrade your plan to continue creating magical stories!
+            </AlertDescription>
+          </Alert>
+        )}
         <div className="space-y-2">
           <Label htmlFor="openai-key">OpenAI API Key</Label>
           <Input
@@ -187,7 +225,7 @@ export const StoryGenerator: React.FC<StoryGeneratorProps> = ({ onStoryGenerated
           variant="magical"
           size="lg"
           className="w-full"
-          disabled={!apiKey || !childName || isGenerating}
+          disabled={!apiKey || !childName || isGenerating || !canGenerateStory}
         >
           {isGenerating ? (
             <>
