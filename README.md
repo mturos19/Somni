@@ -13,7 +13,6 @@ AI‑assisted bedtime story generator with selectable voices, a creator workflow
 ---
 
 ## Screenshots
-Place your screenshots in `public/screenshots/` and name them as below (or update the paths).
 
 ![Select Voice](public/screenshots/select-voice.png)
 ![Create Story](public/screenshots/create-story.png)
@@ -102,3 +101,4 @@ src/
 
 ## License
 Add your chosen license here (e.g., MIT) if you plan to open‑source.
+
