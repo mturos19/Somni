@@ -1,104 +1,164 @@
-## Somni
+# 🌙 Somni - Magical Bedtime Stories
 
-AI‑assisted bedtime story generator with selectable voices, a creator workflow, and a personal library. Built with React, TypeScript, Vite, Tailwind, shadcn/ui, and Supabase for auth, storage, and subscriptions.
+Somni is a beautiful web application that creates personalized children's stories using AI and reads them aloud in a cloned voice of a loved one. Perfect for when parents travel or simply want to create magical bedtime moments.
 
-### Highlights
-- **Create stories**: Guided flow to generate and save bedtime stories
-- **Select voice**: Choose a narration voice for playback
-- **Story library**: Browse, play, and manage saved stories
-- **Authentication**: Email/password via Supabase Auth
-- **Subscriptions**: Gated features and status handling with Supabase
-- **Modern UI**: shadcn/ui + Radix primitives, fully responsive
+![Somni](https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?w=1200&h=400&fit=crop)
 
----
+## ✨ Features
 
-## Screenshots
-Place your screenshots in `public/screenshots/` and name them as below (or update the paths).
+- **AI Story Generation** - Create unique, age-appropriate bedtime stories using GPT-4
+- **Voice Cloning** - Clone a parent's voice using ElevenLabs for personalized narration
+- **Beautiful UI** - Dreamy, child-friendly design with night mode for bedtime reading
+- **Story Library** - Save and organize all your stories in one place
+- **Personalization** - Include your child's name to make them the hero of every story
+- **Age Groups** - Stories tailored for toddlers (1-3), preschoolers (3-5), early readers (5-7), and chapter book readers (7-10)
 
-![Select Voice](public/screenshots/select-voice.png)
-![Create Story](public/screenshots/create-story.png)
-![Library](public/screenshots/library.png)
-
----
-
-## Quickstart
+## 🚀 Getting Started
 
 ### Prerequisites
-- Node 18+
-- npm (or pnpm/yarn/bun)
-- A Supabase project (URL + anon key)
 
-### 1) Clone and install
-```bash
-git clone <your-repo-url>
-cd Somni
-npm install
+- Node.js 18+ 
+- PostgreSQL database
+- OpenAI API key
+- ElevenLabs API key
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/somni.git
+   cd somni
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Then edit `.env` with your credentials:
+   - `DATABASE_URL` - Your PostgreSQL connection string
+   - `AUTH_SECRET` - Generate with `openssl rand -base64 32`
+   - `OPENAI_API_KEY` - Get from [OpenAI Platform](https://platform.openai.com/api-keys)
+   - `ELEVENLABS_API_KEY` - Get from [ElevenLabs](https://elevenlabs.io/app/settings/api-keys)
+
+4. **Set up the database**
+   ```bash
+   npx prisma migrate dev --name init
+   npx prisma generate
+   ```
+
+5. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+6. **Open your browser**
+   
+   Visit [http://localhost:3000](http://localhost:3000)
+
+## 🛠️ Tech Stack
+
+- **Framework**: [Next.js 15](https://nextjs.org/) with App Router
+- **Language**: [TypeScript](https://www.typescriptlang.org/)
+- **Database**: [PostgreSQL](https://www.postgresql.org/) with [Prisma ORM](https://www.prisma.io/)
+- **Authentication**: [NextAuth.js v5](https://authjs.dev/)
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
+- **AI**: [OpenAI GPT-4](https://openai.com/)
+- **Voice**: [ElevenLabs](https://elevenlabs.io/)
+- **Animations**: [Framer Motion](https://www.framer.com/motion/)
+
+## 📁 Project Structure
+
+```
+somni/
+├── src/
+│   ├── app/
+│   │   ├── (auth)/           # Auth pages (login, register)
+│   │   ├── (dashboard)/      # Protected pages (dashboard, create, stories, voices)
+│   │   ├── api/              # API routes
+│   │   │   ├── auth/         # Authentication endpoints
+│   │   │   ├── stories/      # Story CRUD & audio generation
+│   │   │   └── voices/       # Voice cloning management
+│   │   ├── globals.css       # Global styles & design system
+│   │   ├── layout.tsx        # Root layout
+│   │   └── page.tsx          # Landing page
+│   ├── components/           # Reusable components
+│   ├── lib/                  # Utilities & integrations
+│   │   ├── auth.ts           # NextAuth configuration
+│   │   ├── prisma.ts         # Prisma client
+│   │   ├── openai.ts         # Story generation
+│   │   └── elevenlabs.ts     # Voice cloning & TTS
+│   └── types/                # TypeScript type definitions
+├── prisma/
+│   └── schema.prisma         # Database schema
+└── public/                   # Static assets
 ```
 
-### 2) Configure environment
-Create `.env.local` (or `.env`) in the project root. Vite requires `VITE_` prefixes.
-```bash
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
+## 🎨 Design System
 
-If these variables are missing, the app will throw at startup (see `src/lib/supabase.ts`).
+Somni uses a dreamy, calming color palette perfect for bedtime:
 
-### 3) Set up Supabase schema (optional but recommended)
-- See `SUPABASE_SETUP.md` for project configuration
-- Apply SQL in `SUBSCRIPTION_SETUP.sql` if you’re enabling subscriptions
-- See `SUBSCRIPTION_IMPLEMENTATION_GUIDE.md` for usage details
+- **Night**: `#1a1b2e` - Deep background
+- **Twilight**: `#2d2f4e` - Secondary background
+- **Lavender**: `#9b8dc7` - Primary accent
+- **Golden**: `#ffd166` - Call-to-action
+- **Coral**: `#ff8fa3` - Warm accents
+- **Mint**: `#7dd3c0` - Success states
 
-### 4) Run
-```bash
-npm run dev
-```
-Visit the printed local URL (typically `http://localhost:5173`).
+## 📖 API Reference
 
-### 5) Build & preview
-```bash
-npm run build
-npm run preview
-```
+### Stories
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/stories` | Get all user stories |
+| POST | `/api/stories` | Create a new story |
+| GET | `/api/stories/[id]` | Get a specific story |
+| DELETE | `/api/stories/[id]` | Delete a story |
+| POST | `/api/stories/[id]/audio` | Generate audio for story |
+
+### Voices
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/voices` | Get all user voices |
+| POST | `/api/voices` | Clone a new voice |
+| DELETE | `/api/voices/[id]` | Delete a cloned voice |
+
+## 🔒 Security
+
+- Passwords are hashed using bcrypt
+- JWT-based session management
+- API routes are protected with authentication middleware
+- User data is isolated per account
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 💜 Acknowledgments
+
+- Inspired by the magic of bedtime storytelling
+- Built with love for families everywhere
+- Thanks to OpenAI and ElevenLabs for their amazing APIs
 
 ---
 
-## Scripts
-- `npm run dev`: Start Vite dev server
-- `npm run build`: Production build
-- `npm run build:dev`: Development build mode
-- `npm run preview`: Preview production build
-- `npm run lint`: Lint the project
-
----
-
-## Tech Stack
-- React 18, TypeScript, Vite 5
-- Tailwind CSS, shadcn/ui, Radix UI
-- Supabase (Auth, Database, Storage)
-- React Router, TanStack Query
-- Zod, react-hook-form
-- Recharts, Embla Carousel, Sonner
-
----
-
-## Project Structure (high level)
-```text
-src/
-  components/           # UI and feature components (StoryGenerator, StoryLibrary, etc.)
-  contexts/             # Auth and subscription contexts
-  lib/                  # Supabase client, utilities
-  pages/                # Routed pages (Index, Pricing, Login, etc.)
-  assets/               # Static images
-```
-
----
-
-## Notes for Reviewers
-- Subscription flow and gating are implemented with Supabase; see guides in the root for details
-- The UI demonstrates modern React patterns and a clean component architecture
-
----
-
-## License
-Add your chosen license here (e.g., MIT) if you plan to open‑source.
+<p align="center">
+  Made with 💜 for bedtime dreamers everywhere
+</p>

@@ -1,0 +1,117 @@
+// Somni - Children's Story Generator with Voice Cloning
+// Database schema for users, stories, and voice profiles
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  password      String?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts Account[]
+  sessions Session[]
+  stories  Story[]
+  voices   Voice[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Voice {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String   // e.g., "Mom's Voice"
+  elevenLabsId    String?  // Voice ID from ElevenLabs after cloning
+  sampleUrl       String?  // URL to the original voice sample
+  status          VoiceStatus @default(PENDING)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stories Story[]
+}
+
+model Story {
+  id          String   @id @default(cuid())
+  userId      String
+  voiceId     String?
+  title       String
+  prompt      String   // User's original prompt
+  content     String   @db.Text // Generated story text
+  audioUrl    String?  // URL to the generated audio file
+  coverImage  String?  // AI-generated cover image
+  childName   String?  // Name of the child (for personalization)
+  ageGroup    AgeGroup @default(PRESCHOOL)
+  duration    Int?     // Estimated reading duration in seconds
+  status      StoryStatus @default(DRAFT)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  voice Voice? @relation(fields: [voiceId], references: [id], onDelete: SetNull)
+}
+
+enum VoiceStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum StoryStatus {
+  DRAFT
+  GENERATING
+  READY
+  ARCHIVED
+}
+
+enum AgeGroup {
+  TODDLER    // 1-3 years
+  PRESCHOOL  // 3-5 years
+  EARLY_READER // 5-7 years
+  CHAPTER_BOOK // 7-10 years
+}
