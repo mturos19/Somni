@@ -1,6 +1,8 @@
-export default {
+const path = require('path');
+
+module.exports = {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    '@tailwindcss/postcss': {},
   },
-}
+};
+
