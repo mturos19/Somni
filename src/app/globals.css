@@ -1,26 +1,183 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-nunito);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/*
+ * Fallback palette. Every screen is wrapped in a themed container that
+ * overrides these, but defining them here means nothing is ever unstyled
+ * during hydration.
+ */
+:root {
+  --sky-1: #100a26;
+  --sky-2: #241a4d;
+  --sky-3: #453382;
+  --accent: #b79cff;
+  --accent-2: #e4d4ff;
+  --accent-ink: #150c2e;
+  --card: rgba(226, 216, 255, 0.09);
+  --card-strong: rgba(226, 216, 255, 0.16);
+  --border: rgba(190, 172, 255, 0.26);
+  --ink: #f4f0ff;
+  --ink-soft: rgba(244, 240, 255, 0.66);
+  --glow: rgba(183, 156, 255, 0.42);
+  --star: #ece4ff;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--sky-1);
+  color: var(--ink);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* The night sky every screen sits on. */
+.sky {
+  background:
+    radial-gradient(120% 80% at 50% 100%, var(--sky-3) 0%, transparent 60%),
+    radial-gradient(100% 70% at 15% 0%, var(--sky-2) 0%, transparent 55%),
+    linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 100%);
+  transition: background 700ms ease;
+}
+
+.glass {
+  background: var(--card);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(14px);
+}
+
+.glass-strong {
+  background: var(--card-strong);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(18px);
+}
+
+.ink-soft {
+  color: var(--ink-soft);
+}
+
+/* Focus ring that stays visible on every theme. */
+:where(button, a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+}
+
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -14px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+@keyframes sweep {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.animate-twinkle {
+  animation: twinkle var(--twinkle-duration, 4s) ease-in-out infinite;
+  animation-delay: var(--twinkle-delay, 0s);
+}
+
+.animate-drift {
+  animation: drift 9s ease-in-out infinite;
+}
+
+.animate-rise {
+  animation: rise 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-breathe {
+  animation: breathe 3.4s ease-in-out infinite;
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--card-strong) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: sweep 1.8s linear infinite;
+}
+
+/* Story text: generous measure and leading for reading aloud in low light. */
+.story-text {
+  font-family: var(--font-display), ui-serif, Georgia, serif;
+  font-optical-sizing: auto;
+  line-height: 1.65;
+  letter-spacing: 0.004em;
+  text-wrap: pretty;
+}
+
+/* Hide scrollbars on the horizontal chip rows without losing scrollability. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
