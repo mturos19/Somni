@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "somni",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-01",
+  // nodejs_compat gives the Node built-ins the Anthropic SDK expects.
+  // global_fetch_strictly_public keeps fetch() to the public internet, which is
+  // what the adapter assumes.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Writing a story is a long wait on Anthropic rather than a lot of CPU, but
+  // the default 30s ceiling is uncomfortably close for a story plus a page of
+  // narration. Configurable on the Workers Paid plan only.
+  "limits": {
+    "cpu_ms": 60000
+  },
+  "observability": {
+    "enabled": true
+  }
+}

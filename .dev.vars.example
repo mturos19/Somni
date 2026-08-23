@@ -1,0 +1,7 @@
+# Local values for `npm run preview`, which runs the real Worker build.
+# `next dev` reads .env.local instead; keep the two in step.
+# Copy this to `.dev.vars` (gitignored) and fill in the same keys.
+
+NEXTJS_ENV=development
+ANTHROPIC_API_KEY=sk-ant-...
+ELEVENLABS_API_KEY=

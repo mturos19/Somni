@@ -1,36 +1,52 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { base64ToBlob } from "@/lib/audio";
 import { voices as voiceStore, type SavedVoice } from "@/lib/storage";
+import type { SpeakRequest, SpeakResponse } from "@/lib/narration";
 
 /**
  * Three passages rather than one long read. Varied prosody - warm, playful,
  * then slow and sleepy - gives the clone a much better range than a minute of
  * flat reading, and the last one is the register it will spend most of its
  * life in.
+ *
+ * This is the single biggest lever on how alive the finished narration sounds.
+ * A voice clone copies performance, not just timbre: read these three flatly
+ * and every story afterwards will be read back just as flatly, no matter what
+ * the model is asked to do with it. The directions say so in as many words.
  */
 const PASSAGES = [
   {
     id: "warm",
     title: "Warm and ordinary",
-    direction: "Read it the way you would actually talk to your child.",
+    direction:
+      "Out loud, at normal volume, the way you would actually talk to your child. Not a reading voice.",
     text: `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. Nobody thought anything of it. The postman walked past it twice a day. But on the last Tuesday of every month, if you happened to be looking at exactly the right moment, the gate would swing open all on its own, and something small and quick would slip out into the garden and disappear behind the roses.`,
   },
   {
     id: "playful",
     title: "Bright and playful",
-    direction: "Bigger and sillier. Let your voice jump around.",
+    direction:
+      "Bigger and sillier. Do the duck. Let your voice jump around - this is the range the clone will borrow from.",
     text: `Well! said the duck, who was not used to being interrupted. That is the third time this morning! She flapped once, twice, and then, because she was a duck of considerable drama, a third time for good measure. Everyone stop where you are! she shouted. Somebody has stolen my extremely important hat, and I intend to find it before lunch!`,
   },
   {
     id: "sleepy",
     title: "Slow and sleepy",
-    direction: "The bedtime voice. Quiet, unhurried, almost a whisper.",
+    direction:
+      "The bedtime voice. Quiet, unhurried, almost a whisper. This is the one it will use most.",
     text: `The lanterns went out one by one, and the harbour went quiet, and the little boat rocked so gently that you could barely tell it was moving at all. Somewhere far off, a bell rang twice, and then did not ring again. It was very late now. The sea breathed in, and out, and in again, and everybody who was still awake decided, quietly, that they no longer were.`,
   },
 ] as const;
 
 type Recording = { blob: Blob; url: string; seconds: number };
+
+/**
+ * Long enough for Eleven v3 to settle, and written to expose a flat clone:
+ * it needs warmth, a beat of comedy and a soft landing inside four sentences.
+ */
+const PREVIEW_TEXT = `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. And behind that door, at the top of the stairs, someone very small was pretending, extremely badly, to be fast asleep. Goodnight, said the house. Goodnight, said the gate.`;
 
 function pickMimeType(): string {
   const candidates = [
@@ -74,6 +90,7 @@ export function VoiceStudio({
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloning, setCloning] = useState(false);
+  const [previewing, setPreviewing] = useState<string | null>(null);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -82,6 +99,7 @@ export function VoiceStudio({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
   const recordingsRef = useRef(recordings);
+  const previewRef = useRef<{ el: HTMLAudioElement; url: string } | null>(null);
 
   useEffect(() => {
     recordingsRef.current = recordings;
@@ -103,13 +121,69 @@ export function VoiceStudio({
     setLevel(0);
   }, []);
 
+  const stopPreview = useCallback(() => {
+    if (previewRef.current) {
+      previewRef.current.el.pause();
+      URL.revokeObjectURL(previewRef.current.url);
+      previewRef.current = null;
+    }
+    setPreviewing(null);
+  }, []);
+
   // Release the microphone and any object URLs when the studio closes.
   useEffect(() => {
+    const recorded = recordingsRef.current;
     return () => {
       teardownMic();
-      Object.values(recordingsRef.current).forEach((r) => URL.revokeObjectURL(r.url));
+      stopPreview();
+      Object.values(recorded).forEach((r) => URL.revokeObjectURL(r.url));
     };
-  }, [teardownMic]);
+  }, [teardownMic, stopPreview]);
+
+  /**
+   * Reads a sample line back in the finished clone, through exactly the same
+   * route a story uses. Hearing it here is the moment to notice a flat take and
+   * record it again, rather than at bedtime with a child waiting.
+   */
+  async function previewVoice(voiceId: string) {
+    if (previewing === voiceId) {
+      stopPreview();
+      return;
+    }
+
+    stopPreview();
+    setError(null);
+    setPreviewing(voiceId);
+
+    try {
+      const body: SpeakRequest = {
+        voiceId,
+        pages: [{ page: 0, text: PREVIEW_TEXT, mood: "calm" }],
+      };
+
+      const res = await fetch("/api/voice/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.hint ? `${data.error} ${data.hint}` : data.error);
+        setPreviewing(null);
+        return;
+      }
+
+      const url = URL.createObjectURL(base64ToBlob((data as SpeakResponse).audio));
+      const el = new Audio(url);
+      previewRef.current = { el, url };
+      el.onended = stopPreview;
+      await el.play();
+    } catch {
+      setError("Could not play that back.");
+      setPreviewing(null);
+    }
+  }
 
   async function startRecording(passageId: string) {
     setError(null);
@@ -317,6 +391,15 @@ export function VoiceStudio({
                           </div>
                         )}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => void previewVoice(voice.voiceId)}
+                        disabled={!available}
+                        className="rounded-full px-3 py-1.5 text-xs disabled:opacity-40"
+                        style={{ border: "1px solid var(--border)" }}
+                      >
+                        {previewing === voice.voiceId ? "Stop" : "Hear it"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => onSelectVoice(active ? null : voice.voiceId)}

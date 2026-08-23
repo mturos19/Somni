@@ -2,12 +2,41 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNarrator } from "@/lib/useNarrator";
+import { tokenize } from "@/lib/narration";
 import type { SavedStory } from "@/lib/storage";
 
 type Slide =
   | { kind: "cover" }
   | { kind: "page"; index: number }
   | { kind: "end" };
+
+/**
+ * The page, word by word.
+ *
+ * Splitting the text into spans is only worth doing while there is a clock to
+ * follow, so `active` of -1 renders every word in the same resting state and
+ * the page reads exactly as it would have as a plain paragraph.
+ */
+function PageText({ text, active }: { text: string; active: number }) {
+  const tokens = useMemo(() => tokenize(text), [text]);
+
+  return (
+    <p className="story-text text-xl leading-relaxed sm:text-2xl md:text-3xl">
+      {tokens.map((token, index) => {
+        const gap = text.slice(index === 0 ? 0 : tokens[index - 1].to, token.from);
+        const state =
+          active < 0 ? "resting" : index === active ? "now" : index < active ? "said" : "ahead";
+
+        return (
+          <span key={token.from}>
+            {gap}
+            <span className={`word word-${state}`}>{text.slice(token.from, token.to)}</span>
+          </span>
+        );
+      })}
+    </p>
+  );
+}
 
 export function StoryReader({
   saved,
@@ -24,12 +53,7 @@ export function StoryReader({
   const [slideIndex, setSlideIndex] = useState(0);
   const [autoTurn, setAutoTurn] = useState(true);
   const [showNotes, setShowNotes] = useState(false);
-  const autoTurnRef = useRef(autoTurn);
   const touchStartX = useRef<number | null>(null);
-
-  useEffect(() => {
-    autoTurnRef.current = autoTurn;
-  }, [autoTurn]);
 
   const slides = useMemo<Slide[]>(
     () => [
@@ -43,37 +67,28 @@ export function StoryReader({
   const slide = slides[slideIndex];
   const lastIndex = slides.length - 1;
 
-  const handlePageFinished = useCallback(
-    (finished: number) => {
-      if (!autoTurnRef.current) return;
-      // Slide n+1 holds page n, so the next slide is finished + 2.
-      setSlideIndex(Math.min(finished + 2, lastIndex));
-    },
-    [lastIndex],
-  );
+  // Narration owns the page while it is reading: slide n+1 holds page n.
+  const handleNarratedPage = useCallback((page: number) => {
+    setSlideIndex(page + 1);
+  }, []);
+
+  const handleFinished = useCallback(() => {
+    setSlideIndex(lastIndex);
+  }, [lastIndex]);
 
   const narrator = useNarrator({
     storyId: saved.id,
     pages: story.pages,
     voiceId,
-    onPageFinished: handlePageFinished,
+    autoAdvance: autoTurn,
+    onPage: handleNarratedPage,
+    onFinished: handleFinished,
   });
 
-  const { play, stop, prefetch, state: narratorState } = narrator;
+  const { play, stop, prefetch, state: narratorState, word, precise } = narrator;
 
-  // When auto-turn lands us on a new page, keep reading.
-  useEffect(() => {
-    if (!autoTurn) return;
-    if (slide.kind !== "page") return;
-    if (narratorState !== "idle") return;
-    if (narrator.activePage === slide.index) return;
-    void play(slide.index);
-    // Deliberately narrow: this should fire on arrival at a page, not on every
-    // narrator state change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slideIndex, autoTurn]);
-
-  // Warm the first page's audio as soon as the cover is on screen.
+  // Warm the opening pages while the cover is still on screen, so the first
+  // words arrive as soon as the parent taps play.
   useEffect(() => {
     if (slideIndex === 0 && voiceId) prefetch(0);
   }, [slideIndex, voiceId, prefetch]);
@@ -82,10 +97,15 @@ export function StoryReader({
     (next: number) => {
       const clamped = Math.max(0, Math.min(next, lastIndex));
       if (clamped === slideIndex) return;
+
       stop();
       setSlideIndex(clamped);
+
+      // Reading straight through means a page turned by hand keeps reading too.
+      const target = slides[clamped];
+      if (autoTurn && target.kind === "page") void play(target.index);
     },
-    [lastIndex, slideIndex, stop],
+    [autoTurn, lastIndex, play, slideIndex, slides, stop],
   );
 
   useEffect(() => {
@@ -105,23 +125,20 @@ export function StoryReader({
     touchStartX.current = null;
   }
 
-  const isPlayingThisPage =
-    slide.kind === "page" &&
-    narrator.activePage === slide.index &&
-    (narratorState === "playing" || narratorState === "loading");
+  const onThisPage = slide.kind === "page" && narrator.page === slide.index;
+  const isLoadingHere = narratorState === "loading" && onThisPage;
+  const isPlayingHere = narratorState === "playing" && onThisPage;
 
   function togglePlayback() {
+    // From the cover or the end, start at page one. Narration moves the slide
+    // itself, so this must not also navigate - that would fetch twice.
     if (slide.kind !== "page") {
-      goTo(1);
+      void play(0);
       return;
     }
-    if (narratorState === "playing" && narrator.activePage === slide.index) {
-      narrator.pause();
-    } else if (narratorState === "paused" && narrator.activePage === slide.index) {
-      narrator.resume();
-    } else {
-      void play(slide.index);
-    }
+    if (isPlayingHere) narrator.pause();
+    else if (narratorState === "paused" && onThisPage) narrator.resume();
+    else void play(slide.index);
   }
 
   return (
@@ -197,9 +214,10 @@ export function StoryReader({
           )}
 
           {slide.kind === "page" && (
-            <p className="story-text text-xl leading-relaxed sm:text-2xl md:text-3xl">
-              {story.pages[slide.index].text}
-            </p>
+            <PageText
+              text={story.pages[slide.index].text}
+              active={isPlayingHere && precise ? word : -1}
+            />
           )}
 
           {slide.kind === "end" && (
@@ -258,15 +276,11 @@ export function StoryReader({
               style={{
                 background: "var(--accent)",
                 color: "var(--accent-ink)",
-                boxShadow: isPlayingThisPage ? "0 0 0 10px var(--glow)" : undefined,
+                boxShadow: isPlayingHere ? "0 0 0 10px var(--glow)" : undefined,
               }}
-              aria-label={isPlayingThisPage ? "Pause narration" : "Read this page aloud"}
+              aria-label={isPlayingHere ? "Pause narration" : "Read this page aloud"}
             >
-              {narratorState === "loading" && narrator.activePage === (slide.kind === "page" ? slide.index : -1)
-                ? "…"
-                : isPlayingThisPage
-                  ? "‖"
-                  : "▶"}
+              {isLoadingHere ? "…" : isPlayingHere ? "‖" : "▶"}
             </button>
 
             <button
@@ -287,10 +301,14 @@ export function StoryReader({
                 onChange={(e) => setAutoTurn(e.target.checked)}
                 className="h-4 w-4 accent-[var(--accent)]"
               />
-              <span className="ink-soft">Turn pages automatically</span>
+              <span className="ink-soft">Read straight through</span>
             </label>
             <span className="ink-soft">
-              {voiceId ? `Read by ${voiceName ?? "your voice"}` : "Device voice"}
+              {isLoadingHere
+                ? "Warming up your voice..."
+                : voiceId
+                  ? `Read by ${voiceName ?? "your voice"}`
+                  : "Device voice"}
             </span>
           </div>
         </div>

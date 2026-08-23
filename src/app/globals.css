@@ -164,6 +164,36 @@ body {
   text-wrap: pretty;
 }
 
+/*
+ * Word-by-word narration.
+ *
+ * Deliberately not a karaoke bar: a filled block moving through the text is
+ * hard to read in a dark room and reads as a game rather than a book. Words
+ * that have not been said yet sit back, the one being said comes forward and
+ * warms, and the ones already read stay legible so a child following along can
+ * see where they have got to.
+ */
+.word {
+  transition:
+    color 180ms ease,
+    opacity 180ms ease,
+    text-shadow 180ms ease;
+}
+
+.word-ahead {
+  opacity: 0.45;
+}
+
+.word-said {
+  opacity: 0.75;
+}
+
+.word-now {
+  opacity: 1;
+  color: var(--accent);
+  text-shadow: 0 0 22px var(--glow);
+}
+
 /* Hide scrollbars on the horizontal chip rows without losing scrollability. */
 .no-scrollbar {
   scrollbar-width: none;

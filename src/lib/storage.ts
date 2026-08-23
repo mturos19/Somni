@@ -2,6 +2,7 @@
 
 import type { Story } from "./story";
 import type { GroupId } from "./elements";
+import type { PageTiming } from "./narration";
 
 /**
  * Local-first persistence. Everything a family creates - profiles, stories, and
@@ -9,12 +10,17 @@ import type { GroupId } from "./elements";
  */
 
 const DB_NAME = "somni";
-const DB_VERSION = 1;
+/**
+ * v2 replaced the per-page audio blobs with per-segment clips that also carry
+ * word timings. Cached narration is always re-creatable from the story, so the
+ * upgrade drops the old store rather than trying to migrate it.
+ */
+const DB_VERSION = 2;
 
 export const STORES = {
   profiles: "profiles",
   stories: "stories",
-  audio: "audio",
+  clips: "clips",
   voices: "voices",
 } as const;
 
@@ -65,8 +71,9 @@ function openDb(): Promise<IDBDatabase> {
         const store = db.createObjectStore(STORES.stories, { keyPath: "id" });
         store.createIndex("createdAt", "createdAt");
       }
-      if (!db.objectStoreNames.contains(STORES.audio)) {
-        db.createObjectStore(STORES.audio);
+      if (db.objectStoreNames.contains("audio")) db.deleteObjectStore("audio");
+      if (!db.objectStoreNames.contains(STORES.clips)) {
+        db.createObjectStore(STORES.clips);
       }
       if (!db.objectStoreNames.contains(STORES.voices)) {
         db.createObjectStore(STORES.voices, { keyPath: "voiceId" });
@@ -140,35 +147,42 @@ export const stories = {
     safe(run(STORES.stories, "readwrite", (s) => s.put(story)), undefined),
   async remove(id: string) {
     await safe(run(STORES.stories, "readwrite", (s) => s.delete(id)), undefined);
-    await audio.clearStory(id);
+    await clips.clearStory(id);
   },
 };
 
-/* ----------------------------------- audio ----------------------------------- */
+/* ----------------------------------- clips ----------------------------------- */
 
-const audioKey = (storyId: string, page: number, voiceId: string) =>
-  `${storyId}::${voiceId}::${page}`;
+export type SavedClip = {
+  audio: Blob;
+  duration: number;
+  precise: boolean;
+  pages: PageTiming[];
+};
 
-export const audio = {
-  get: (storyId: string, page: number, voiceId: string) =>
+const clipKey = (storyId: string, segment: number, voiceId: string) =>
+  `${storyId}::${voiceId}::${segment}`;
+
+export const clips = {
+  get: (storyId: string, segment: number, voiceId: string) =>
     safe(
-      run<Blob | undefined>(STORES.audio, "readonly", (s) =>
-        s.get(audioKey(storyId, page, voiceId)),
+      run<SavedClip | undefined>(STORES.clips, "readonly", (s) =>
+        s.get(clipKey(storyId, segment, voiceId)),
       ),
       undefined,
     ),
-  put: (storyId: string, page: number, voiceId: string, blob: Blob) =>
+  put: (storyId: string, segment: number, voiceId: string, clip: SavedClip) =>
     safe(
-      run(STORES.audio, "readwrite", (s) =>
-        s.put(blob, audioKey(storyId, page, voiceId)),
+      run(STORES.clips, "readwrite", (s) =>
+        s.put(clip, clipKey(storyId, segment, voiceId)),
       ),
       undefined,
     ),
   async clearStory(storyId: string) {
     try {
       const db = await openDb();
-      const tx = db.transaction(STORES.audio, "readwrite");
-      const store = tx.objectStore(STORES.audio);
+      const tx = db.transaction(STORES.clips, "readwrite");
+      const store = tx.objectStore(STORES.clips);
       const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
         const req = store.getAllKeys();
         req.onsuccess = () => resolve(req.result);
@@ -180,7 +194,7 @@ export const audio = {
         }
       }
     } catch (err) {
-      console.warn("[storage] could not clear audio", err);
+      console.warn("[storage] could not clear narration", err);
     }
   },
 };

@@ -1,0 +1,7 @@
+# Next puts a content hash in every filename under this path, so these can be
+# cached hard and forever.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/favicon.ico
+  Cache-Control: public, max-age=604800

@@ -8,6 +8,7 @@ import { StoryReader } from "@/components/StoryReader";
 import { ThemePicker } from "@/components/ThemePicker";
 import { VoiceStudio } from "@/components/VoiceStudio";
 import { randomSelection } from "@/lib/elements";
+import { StoryError, writeStory } from "@/lib/storyStream";
 import { DEFAULT_THEME, themeById, themeStyle } from "@/lib/themes";
 import {
   newId,
@@ -19,10 +20,19 @@ import {
   type SavedVoice,
 } from "@/lib/storage";
 
-const WRITING_LINES = [
+/**
+ * Two sets, because the two halves of the wait are genuinely different: first
+ * the model plans the story, which takes a while and shows nothing, then it
+ * writes it, which we can measure.
+ */
+const THINKING_LINES = [
   "Thinking of somewhere to begin...",
   "Choosing who your child will meet...",
   "Working out what goes wrong, gently...",
+];
+
+const WRITING_LINES = [
+  "Writing it down...",
   "Making sure it ends somewhere safe...",
   "Slowing down the last few pages...",
 ];
@@ -44,7 +54,11 @@ export default function Home() {
   const [reading, setReading] = useState<SavedStory | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<"thinking" | "writing">("thinking");
+  const [written, setWritten] = useState(0);
   const [lineIndex, setLineIndex] = useState(0);
+  /** What a finished story of this size usually weighs, per the server. */
+  const [expected, setExpected] = useState(1);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
@@ -87,10 +101,7 @@ export default function Home() {
   // Cycle the reassuring messages while Claude works.
   useEffect(() => {
     if (!busy) return;
-    const id = setInterval(
-      () => setLineIndex((i) => (i + 1) % WRITING_LINES.length),
-      2600,
-    );
+    const id = setInterval(() => setLineIndex((i) => i + 1), 2600);
     return () => clearInterval(id);
   }, [busy]);
 
@@ -101,16 +112,17 @@ export default function Home() {
     [],
   );
 
-  async function writeStory() {
+  async function createStory() {
     setBusy(true);
     setError(null);
+    setPhase("thinking");
+    setWritten(0);
+    setExpected(1);
     setLineIndex(0);
 
     try {
-      const res = await fetch("/api/story", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const story = await writeStory(
+        {
           childName: profile.name,
           age: profile.age,
           hero: selection.hero,
@@ -119,20 +131,19 @@ export default function Home() {
           vibe: selection.vibe,
           custom,
           themeName: theme.name,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError({ message: data.error, hint: data.hint });
-        return;
-      }
+        },
+        (event) => {
+          if (event.type === "start") setExpected(Math.max(1, event.expectedChars));
+          else if (event.type === "phase") setPhase(event.phase);
+          else if (event.type === "progress") setWritten(event.chars);
+        },
+      );
 
       const saved: SavedStory = {
         id: newId(),
         profileId: profile.id,
-        title: data.story.title,
-        story: data.story,
+        title: story.title,
+        story,
         themeId: profile.themeId,
         age: profile.age,
         selection,
@@ -143,8 +154,14 @@ export default function Home() {
       await storyStore.save(saved);
       setLibrary(await storyStore.all());
       setReading(saved);
-    } catch {
-      setError({ message: "Could not reach the story writer.", hint: "Check your connection." });
+    } catch (err) {
+      if (err instanceof StoryError) setError({ message: err.message, hint: err.hint });
+      else {
+        setError({
+          message: "Could not reach the story writer.",
+          hint: "Check your connection.",
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -310,7 +327,7 @@ export default function Home() {
         <div className="mx-auto max-w-2xl">
           <button
             type="button"
-            onClick={() => void writeStory()}
+            onClick={() => void createStory()}
             disabled={busy || !config.story}
             className="w-full rounded-full py-4 text-base font-bold shadow-lg transition active:scale-[0.99] disabled:opacity-50"
             style={{
@@ -332,12 +349,38 @@ export default function Home() {
         >
           <div className="animate-breathe text-6xl">{"\u{2728}"}</div>
           <p className="story-text max-w-sm text-center text-xl">
-            {WRITING_LINES[lineIndex]}
+            {(phase === "thinking" ? THINKING_LINES : WRITING_LINES)[
+              lineIndex % (phase === "thinking" ? THINKING_LINES : WRITING_LINES).length
+            ]}
           </p>
-          <div
-            className="shimmer h-1 w-48 rounded-full"
-            style={{ background: "var(--card-strong)" }}
-          />
+
+          {/*
+            While the model is planning there is nothing honest to measure, so
+            the bar shimmers. Once words start arriving it fills for real.
+          */}
+          {phase === "thinking" ? (
+            <div
+              className="shimmer h-1 w-48 rounded-full"
+              style={{ background: "var(--card-strong)" }}
+            />
+          ) : (
+            <div
+              className="h-1 w-48 overflow-hidden rounded-full"
+              style={{ background: "var(--card-strong)" }}
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(Math.min(0.97, written / expected) * 100)}
+            >
+              <div
+                className="h-full rounded-full transition-[width] duration-500 ease-out"
+                style={{
+                  width: `${Math.min(97, (written / expected) * 100)}%`,
+                  background: "var(--accent)",
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 

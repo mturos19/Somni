@@ -1,5 +1,5 @@
 import {
-  ELEVENLABS_BASE,
+  elevenLabsBase,
   errorResponse,
   requireKey,
   toFriendlyError,
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       outgoing.append("files", sample, sample.name || "sample.webm");
     }
 
-    const res = await fetch(`${ELEVENLABS_BASE}/v1/voices/add`, {
+    const res = await fetch(`${elevenLabsBase()}/v1/voices/add`, {
       method: "POST",
       headers: { "xi-api-key": key },
       body: outgoing,

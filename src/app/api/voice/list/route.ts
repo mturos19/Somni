@@ -1,5 +1,5 @@
 import {
-  ELEVENLABS_BASE,
+  elevenLabsBase,
   errorResponse,
   requireKey,
   toFriendlyError,
@@ -22,7 +22,7 @@ export async function GET() {
   try {
     const key = requireKey();
 
-    const res = await fetch(`${ELEVENLABS_BASE}/v1/voices`, {
+    const res = await fetch(`${elevenLabsBase()}/v1/voices`, {
       headers: { "xi-api-key": key },
       cache: "no-store",
     });
@@ -57,7 +57,7 @@ export async function DELETE(request: Request) {
     }
 
     const res = await fetch(
-      `${ELEVENLABS_BASE}/v1/voices/${encodeURIComponent(voiceId)}`,
+      `${elevenLabsBase()}/v1/voices/${encodeURIComponent(voiceId)}`,
       { method: "DELETE", headers: { "xi-api-key": key } },
     );
     if (!res.ok) throw await toFriendlyError(res);
