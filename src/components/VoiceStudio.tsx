@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { base64ToBlob } from "@/lib/audio";
+import { decodeNarration } from "@/lib/audio";
 import { voices as voiceStore, type SavedVoice } from "@/lib/storage";
-import type { SpeakRequest, SpeakResponse } from "@/lib/narration";
+import type { SpeakRequest } from "@/lib/narration";
 
 /**
  * Three passages rather than one long read. Varied prosody - warm, playful,
@@ -72,11 +72,15 @@ function extensionFor(mime: string): string {
 export function VoiceStudio({
   available,
   selectedVoiceId,
+  expressive,
+  onExpressiveChange,
   onSelectVoice,
   onClose,
 }: {
   available: boolean;
   selectedVoiceId: string | null;
+  expressive: boolean;
+  onExpressiveChange: (expressive: boolean) => void;
   onSelectVoice: (voiceId: string | null) => void;
   onClose: () => void;
 }) {
@@ -158,6 +162,7 @@ export function VoiceStudio({
     try {
       const body: SpeakRequest = {
         voiceId,
+        mode: expressive ? "expressive" : "faithful",
         pages: [{ page: 0, text: PREVIEW_TEXT, mood: "calm" }],
       };
 
@@ -167,14 +172,14 @@ export function VoiceStudio({
         body: JSON.stringify(body),
       });
 
-      const data = await res.json();
       if (!res.ok) {
-        setError(data.hint ? `${data.error} ${data.hint}` : data.error);
+        const detail = await res.json().catch(() => ({}));
+        setError(detail.hint ? `${detail.error} ${detail.hint}` : detail.error);
         setPreviewing(null);
         return;
       }
 
-      const url = URL.createObjectURL(base64ToBlob((data as SpeakResponse).audio));
+      const url = URL.createObjectURL(decodeNarration(await res.arrayBuffer()).audio);
       const el = new Audio(url);
       previewRef.current = { el, url };
       el.onended = stopPreview;
@@ -424,6 +429,33 @@ export function VoiceStudio({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* How to read */}
+          {saved.length > 0 && (
+            <div
+              className="mt-4 rounded-2xl p-4"
+              style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+            >
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={expressive}
+                  onChange={(e) => onExpressiveChange(e.target.checked)}
+                  className="mt-1 h-5 w-5 shrink-0 accent-[var(--accent)]"
+                />
+                <span className="text-sm">
+                  <strong>Read more expressively</strong>
+                  <span className="ink-soft block text-xs">
+                    Uses a livelier voice model that acts the story out rather
+                    than reading it. Some voices carry it beautifully; others
+                    come back sounding processed and less like you. Off is the
+                    closest to your own recording. Change it, then use{" "}
+                    <strong>Hear it</strong> above to compare.
+                  </span>
+                </span>
+              </label>
             </div>
           )}
 

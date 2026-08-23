@@ -104,15 +104,28 @@ export type PageTiming = {
 
 export type SpeakRequest = {
   voiceId: string;
+  /** Which voice model to read with. Defaults to the faithful one. */
+  mode?: "faithful" | "expressive";
   pages: { page: number; text: string; mood: Mood }[];
   /** The pages either side of this segment. Ignored by models that reject stitching. */
   previousText?: string;
   nextText?: string;
 };
 
-export type SpeakResponse = {
-  /** base64 mp3 */
-  audio: string;
+/**
+ * The metadata half of a narration response.
+ *
+ * Audio does not travel inside this. A segment is around half a megabyte, and
+ * base64 inside JSON inflates that by a third and makes both ends re-encode it
+ * for nothing. The route answers with bytes instead:
+ *
+ *   [4 bytes, big-endian: header length][header JSON, UTF-8][mp3]
+ *
+ * Measured, that is about a millisecond of server CPU per segment instead of
+ * two and a half - which is what keeps this inside a free Worker - and it saves
+ * a phone the work of decoding base64 at bedtime.
+ */
+export type SpeakHeader = {
   duration: number;
   /**
    * True when the timings came from the API's character alignment. False means
@@ -122,6 +135,9 @@ export type SpeakResponse = {
   precise: boolean;
   pages: PageTiming[];
 };
+
+/** Bytes at the front of a narration response holding the header's length. */
+export const NARRATION_PREFIX_BYTES = 4;
 
 /**
  * Timings inferred from how long each page is, for the rare generation that

@@ -175,23 +175,30 @@ body {
  */
 .word {
   transition:
-    color 180ms ease,
-    opacity 180ms ease,
-    text-shadow 180ms ease;
+    color 260ms ease,
+    opacity 260ms ease,
+    text-shadow 260ms ease;
 }
 
 .word-ahead {
-  opacity: 0.45;
+  opacity: 0.55;
 }
 
 .word-said {
-  opacity: 0.75;
+  opacity: 0.85;
 }
 
+/*
+ * The word being spoken arrives instantly. Fading it in is what makes
+ * highlighting feel like a timer sweeping through the line rather than a voice
+ * landing on a word - at speech rate most words are under a fifth of a second,
+ * so any cross-fade smears one into the next. It lights hard and fades soft.
+ */
 .word-now {
   opacity: 1;
   color: var(--accent);
   text-shadow: 0 0 22px var(--glow);
+  transition: none;
 }
 
 /* Hide scrollbars on the horizontal chip rows without losing scrollability. */

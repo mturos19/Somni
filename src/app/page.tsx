@@ -185,6 +185,7 @@ export default function Home() {
           saved={reading}
           voiceId={profile.voiceId}
           voiceName={activeVoiceName}
+          expressive={profile.expressiveVoice ?? false}
           onExit={() => setReading(null)}
         />
       </div>
@@ -388,6 +389,8 @@ export default function Home() {
         <VoiceStudio
           available={config.voice}
           selectedVoiceId={profile.voiceId}
+          expressive={profile.expressiveVoice ?? false}
+          onExpressiveChange={(expressiveVoice) => updateProfile({ expressiveVoice })}
           onSelectVoice={async (voiceId) => {
             updateProfile({ voiceId });
             setSavedVoices(await voiceStore.all());

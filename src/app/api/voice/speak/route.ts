@@ -12,7 +12,13 @@ import {
   type Alignment,
   type SpokenPiece,
 } from "@/lib/elevenlabs";
-import { proportionalTimings, type SpeakRequest, type SpeakResponse } from "@/lib/narration";
+import {
+  NARRATION_PREFIX_BYTES,
+  proportionalTimings,
+  type SpeakHeader,
+  type SpeakRequest,
+} from "@/lib/narration";
+import { Buffer } from "node:buffer";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -21,6 +27,21 @@ export const maxDuration = 180;
 const CHARS_PER_SECOND = 12.5;
 
 const MOODS = new Set(["calm", "playful", "wonder", "brave", "sleepy"]);
+
+/** Header length, then the header, then the audio. See SpeakHeader. */
+function frame(header: SpeakHeader, audio: Uint8Array): ArrayBuffer {
+  const encoded = new TextEncoder().encode(JSON.stringify(header));
+  const buffer = new ArrayBuffer(
+    NARRATION_PREFIX_BYTES + encoded.length + audio.length,
+  );
+
+  new DataView(buffer).setUint32(0, encoded.length, false);
+  const bytes = new Uint8Array(buffer);
+  bytes.set(encoded, NARRATION_PREFIX_BYTES);
+  bytes.set(audio, NARRATION_PREFIX_BYTES + encoded.length);
+
+  return buffer;
+}
 
 /**
  * Narrates one segment - a run of whole pages - and returns the audio together
@@ -34,9 +55,9 @@ const MOODS = new Set(["calm", "playful", "wonder", "brave", "sleepy"]);
 export async function POST(request: Request) {
   try {
     const key = requireKey();
-    const model = ttsModel();
 
     const body = (await request.json()) as Partial<SpeakRequest>;
+    const model = ttsModel(body.mode === "expressive" ? "expressive" : "faithful");
     const voiceId = body.voiceId?.trim();
     const pages = Array.isArray(body.pages) ? body.pages : [];
 
@@ -115,22 +136,22 @@ export async function POST(request: Request) {
     }
 
     const aligned = timingsFromAlignment(speech, pieces, data.alignment);
+    const estimated = speech.length / CHARS_PER_SECOND;
 
-    const answer: SpeakResponse = aligned
-      ? {
-          audio: data.audio_base64,
-          duration: aligned.duration,
-          precise: true,
-          pages: aligned.pages,
-        }
+    const header: SpeakHeader = aligned
+      ? { duration: aligned.duration, precise: true, pages: aligned.pages }
       : {
-          audio: data.audio_base64,
-          duration: speech.length / CHARS_PER_SECOND,
+          duration: estimated,
           precise: false,
-          pages: proportionalTimings(pieces, speech.length / CHARS_PER_SECOND),
+          pages: proportionalTimings(pieces, estimated),
         };
 
-    return Response.json(answer, { headers: { "Cache-Control": "no-store" } });
+    return new Response(frame(header, Buffer.from(data.audio_base64, "base64")), {
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (err) {
     return errorResponse(err);
   }

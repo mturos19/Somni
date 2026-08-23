@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { base64ToBlob } from "./audio";
-import { clips as clipStore, type SavedClip } from "./storage";
+import { decodeNarration } from "./audio";
+import { clipKey, clips as clipStore, type SavedClip } from "./storage";
 import {
   pageBoundary,
   pageIndexAt,
@@ -12,7 +12,6 @@ import {
   wordAt,
   type PageTiming,
   type SpeakRequest,
-  type SpeakResponse,
 } from "./narration";
 import type { StoryPage } from "./story";
 
@@ -23,12 +22,25 @@ type Options = {
   pages: StoryPage[];
   /** ElevenLabs voice id, or null to use the browser's built-in speech. */
   voiceId: string | null;
+  /** Read with Eleven v3 rather than the model that stays closest to the clone. */
+  expressive: boolean;
   /** Keep reading into the next page when one ends. */
   autoAdvance: boolean;
   /** Called when narration moves to a page, so the book can turn itself. */
   onPage: (index: number) => void;
   onFinished?: () => void;
 };
+
+/**
+ * How far ahead of the audio clock the word highlight runs.
+ *
+ * `currentTime` is the decode position, not the moment sound leaves the
+ * speaker, and everything between - the output buffer, and Bluetooth most of
+ * all - adds delay. Reading along also works better when the eye arrives a
+ * fraction before the ear rather than chasing it. Small enough that it never
+ * lands on the wrong word.
+ */
+const HIGHLIGHT_LEAD_SECONDS = 0.08;
 
 function scaleTimings(pages: PageTiming[], factor: number): PageTiming[] {
   if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - 1) < 0.02) return pages;
@@ -60,6 +72,7 @@ export function useNarrator({
   storyId,
   pages,
   voiceId,
+  expressive,
   autoAdvance,
   onPage,
   onFinished,
@@ -159,12 +172,13 @@ export function useNarrator({
     (index: number): Promise<SavedClip> => {
       if (!voiceId) return Promise.reject(new Error("No voice selected."));
 
-      const key = `${voiceId}::${index}`;
+      const mode = expressive ? "expressive" : "faithful";
+      const key = clipKey(storyId, index, voiceId, mode);
       const existing = inflightRef.current.get(key);
       if (existing) return existing;
 
       const work = (async () => {
-        const cached = await clipStore.get(storyId, index, voiceId);
+        const cached = await clipStore.get(key);
         if (cached) return cached;
 
         const plan = segments[index];
@@ -173,6 +187,7 @@ export function useNarrator({
 
         const body: SpeakRequest = {
           voiceId,
+          mode,
           pages: plan.pages.map((p) => ({
             page: p,
             text: pages[p].text,
@@ -193,15 +208,9 @@ export function useNarrator({
           throw new Error(detail.hint || detail.error || "Could not narrate that.");
         }
 
-        const data = (await res.json()) as SpeakResponse;
-        const clip: SavedClip = {
-          audio: base64ToBlob(data.audio),
-          duration: data.duration,
-          precise: data.precise,
-          pages: data.pages,
-        };
+        const clip: SavedClip = decodeNarration(await res.arrayBuffer());
 
-        void clipStore.put(storyId, index, voiceId, clip);
+        void clipStore.put(key, clip);
         return clip;
       })();
 
@@ -209,7 +218,7 @@ export function useNarrator({
       void work.catch(() => {}).finally(() => inflightRef.current.delete(key));
       return work;
     },
-    [pages, segments, storyId, voiceId],
+    [expressive, pages, segments, storyId, voiceId],
   );
 
   const prefetch = useCallback(
@@ -247,7 +256,10 @@ export function useNarrator({
 
         showPage(current.page);
 
-        const index = current.words.length > 0 ? wordAt(current.words, now) : -1;
+        const index =
+          current.words.length > 0
+            ? wordAt(current.words, now + HIGHLIGHT_LEAD_SECONDS)
+            : -1;
         setWord((previous) => (previous === index ? previous : index));
 
         if (!autoRef.current) {
@@ -515,7 +527,7 @@ export function useNarrator({
   }, [follow]);
 
   // Tear everything down if the story or the voice changes, or on unmount.
-  useEffect(() => stop, [stop, storyId, voiceId]);
+  useEffect(() => stop, [stop, storyId, voiceId, expressive]);
 
   return {
     state,

@@ -11,14 +11,10 @@ Everything below assumes you are in the project root.
 
 ## Before you start
 
-**You need the Workers Paid plan ($5/month).** This is not optional for Somni.
-The free plan allows 10 ms of CPU per request, which is not enough to render a
-Next.js response, and `wrangler.jsonc` raises the CPU ceiling to 60 s — a
-setting the free plan rejects. Writing a story and generating narration are
-mostly *waiting* on Anthropic and ElevenLabs, and waiting is not billed as CPU,
-so the actual cost stays near the $5 minimum.
+**The free Workers plan is enough.** See [Running this for free](#running-this-for-free)
+below for why, and for the two things that would push you onto a paid plan.
 
-You also need:
+You need:
 
 - A Cloudflare account
 - `ANTHROPIC_API_KEY` — https://console.anthropic.com/settings/keys
@@ -97,13 +93,63 @@ Secrets persist across deploys; you only set them once.
 
 ---
 
+## Running this for free
+
+Somni fits the **Workers Free** plan: 100,000 Worker requests a day, 10 ms of
+CPU per request. Two things make that comfortable rather than tight.
+
+**Most requests never reach the Worker.** The app shell, fonts, CSS and JS are
+static assets, and Cloudflare states that "requests to static assets are free
+and unlimited" — they do not invoke the Worker or count against the request
+limit. Only `/api/*` calls do, which is a handful per story.
+
+**The API routes are almost entirely waiting, and waiting is not CPU.** Writing
+a story is minutes of Anthropic doing the work; narration is seconds of
+ElevenLabs doing it. Measured on a real three-page segment, the heaviest route
+spends about **1 ms** of actual CPU assembling its response. The 10 ms ceiling
+also has give: Cloudflare terminates a Worker that hits it *consistently*, not
+one that occasionally runs over.
+
+Two things would move you to Workers Paid ($5/month):
+
+- **Sharing it widely.** 100,000 requests a day is generous for a family and
+  irrelevant for a hobby project, but it is a real ceiling.
+- **A cold start that will not fit.** Workers cap Worker *startup* at 400 ms,
+  and a Next.js bundle is not small. If a deploy is rejected for startup time,
+  that is the message you will see, and it applies on both plans equally.
+
+If you do upgrade later, the one setting worth adding back is the CPU ceiling —
+`wrangler.jsonc` has it commented with the value.
+
+### What about Cloudflare Pages?
+
+Pages will not help. Pages Functions run on the same runtime with the same 10 ms
+CPU limit on the free plan, so there is nothing to gain, and Cloudflare is
+folding Pages' features into Workers rather than the other way round — Workers
+with static assets is now the recommended path for a full-stack app like this
+one. Existing Pages projects stay supported, but this is not one.
+
+`@cloudflare/next-on-pages`, the old Next.js-on-Pages adapter, is superseded by
+`@opennextjs/cloudflare`, which is what this project uses.
+
+### If you would rather not use Cloudflare at all
+
+Somni is plain Next.js, so **Vercel's Hobby plan** is free too and needs no
+adapter — push the repo, set the two environment variables, done. It suits the
+story route slightly better: Hobby allows the full 300 s function duration this
+app declares, and bills no per-request CPU limit at all. Two caveats: Hobby is
+licensed for non-commercial use only, and Vercel caps request bodies at 4.5 MB,
+which the voice-cloning upload could exceed if you record several long passages.
+
+---
+
 ## Configuration reference
 
 | Name | Where | Purpose |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | secret | Writes the stories. Required. |
 | `ELEVENLABS_API_KEY` | secret | Voice cloning and narration. Optional. |
-| `ELEVENLABS_TTS_MODEL` | plain var | Override the voice model. Defaults to `eleven_v3`. |
+| `ELEVENLABS_TTS_MODEL` | plain var | Pin one voice model, ignoring the app's expressive setting. |
 | `ELEVENLABS_BASE_URL` | plain var | Regional endpoint, for EU/India/Singapore data residency. |
 
 Plain (non-secret) variables go in `wrangler.jsonc` under a `vars` block:
@@ -140,16 +186,26 @@ binding (R2, KV, D1) is also the point at which you want
 `initOpenNextCloudflareForDev()` in `next.config.ts`, so `next dev` can see the
 bindings too.
 
-**Bundle size.** Workers cap the compressed Worker at 10 MiB on the paid plan.
-Somni is currently around 1.1 MiB, so there is a lot of room.
+**Bundle size.** Workers cap the compressed Worker at 3 MiB on the free plan and
+10 MiB on paid. Somni is currently around 1.1 MiB, so there is room on either.
+
+**Narration is sent as bytes, not JSON.** `/api/voice/speak` answers with a
+length-prefixed header followed by the raw mp3, rather than base64 inside JSON.
+That is a third less data over the wire, no base64 decoding on the phone, and
+about half the server CPU — which is part of what keeps this inside the free
+plan's budget.
 
 ---
 
 ## Troubleshooting
 
-**`limits.cpu_ms is not supported on your plan`** — you are on the free plan.
-Upgrade to Workers Paid, or delete the `limits` block and accept that rendering
-will fail on anything but a trivial request.
+**`limits.cpu_ms is not supported on your plan`** — you have uncommented the
+`limits` block in `wrangler.jsonc` while on the free plan. Comment it out again;
+the defaults are fine.
+
+**`Worker exceeded CPU time limit` in the logs** — if this is occasional,
+Cloudflare tolerates it. If it is every request, upgrade to Workers Paid and
+uncomment the `limits` block.
 
 **Stories fail with a 503 saying the story writer is not connected** — the
 `ANTHROPIC_API_KEY` secret is missing on the deployed Worker. `.env.local` is a

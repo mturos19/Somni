@@ -1,17 +1,27 @@
 "use client";
 
-/** Decoding a whole clip in one atob call stalls a phone for a beat. */
-const DECODE_CHUNK = 32 * 1024;
+import { NARRATION_PREFIX_BYTES, type SpeakHeader } from "./narration";
 
-/** Narration arrives as base64 inside JSON, alongside its word timings. */
-export function base64ToBlob(base64: string, type = "audio/mpeg"): Blob {
-  const binary = atob(base64);
-  const parts: Uint8Array[] = [];
-  for (let offset = 0; offset < binary.length; offset += DECODE_CHUNK) {
-    const slice = binary.slice(offset, offset + DECODE_CHUNK);
-    const bytes = new Uint8Array(slice.length);
-    for (let i = 0; i < slice.length; i += 1) bytes[i] = slice.charCodeAt(i);
-    parts.push(bytes);
+export type Narration = SpeakHeader & { audio: Blob };
+
+/**
+ * Reads a narration response: a length-prefixed JSON header followed by the
+ * mp3 itself. See SpeakHeader for why the audio is not JSON.
+ */
+export function decodeNarration(buffer: ArrayBuffer): Narration {
+  if (buffer.byteLength < NARRATION_PREFIX_BYTES) {
+    throw new Error("That narration arrived empty.");
   }
-  return new Blob(parts as BlobPart[], { type });
+
+  const headerLength = new DataView(buffer).getUint32(0, false);
+  const audioAt = NARRATION_PREFIX_BYTES + headerLength;
+  if (audioAt > buffer.byteLength) {
+    throw new Error("That narration arrived incomplete.");
+  }
+
+  const header = JSON.parse(
+    new TextDecoder().decode(new Uint8Array(buffer, NARRATION_PREFIX_BYTES, headerLength)),
+  ) as SpeakHeader;
+
+  return { ...header, audio: new Blob([buffer.slice(audioAt)], { type: "audio/mpeg" }) };
 }

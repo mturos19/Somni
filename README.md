@@ -74,8 +74,19 @@ route so a flat take is caught there rather than at bedtime.
 The recordings go to ElevenLabs Instant Voice Cloning (`POST /v1/voices/add`)
 and the returned voice id is stored locally.
 
-Narration then uses **Eleven v3**, the expressive model, and two things follow
-from that choice:
+Narration defaults to **eleven_multilingual_v2**, and that default is a
+deliberate retreat. Eleven v3 is a much livelier model, but an Instant Voice
+Clone is two minutes of audio, and v3 re-interprets it: some clones carry that
+beautifully, others come back sounding processed and less like the person. A
+child recognising the voice matters more than the voice acting well, so the
+faithful model is what you get unless you ask otherwise.
+
+**Read more expressively** in the voice studio switches to v3, and the studio's
+**Hear it** button reads the same sample line under whichever setting is on, so
+the two can be compared directly rather than argued about. Cached narration is
+keyed by mode, so flipping the setting really does re-read the story.
+
+Two things follow from v3 when it is switched on:
 
 - **v3 takes direction through audio tags.** Every page already carries a mood
   from the story model, and [`src/lib/elevenlabs.ts`](src/lib/elevenlabs.ts)
@@ -83,17 +94,17 @@ from that choice:
   `[softly]` - plus a small change of pace. The tags are direction, not speech:
   measured against the API's own alignment, `[in awe]` occupies 0.13 s of
   silence rather than the ~0.6 s it would take to say. Tags come from a closed
-  set chosen server-side, never from free text.
-- **v3 rejects `previous_text` / `next_text`** with a 400. So continuity across
-  a page turn cannot come from request stitching, and comes instead from
-  narrating several pages in one generation.
+  set chosen server-side, never from free text. The v2 models get neither tags
+  nor mood pacing, both of which read as edited rather than read.
+- **v3 rejects `previous_text` / `next_text`** with a 400. So on v3 continuity
+  across a page turn cannot come from request stitching.
 
-That second point shapes the whole playback model. Stories are cut into
-*segments* of whole pages by [`src/lib/narration.ts`](src/lib/narration.ts) -
-the first one short so the first words arrive quickly, later ones longer since
-they are fetched while the previous one is still playing, all of them well above
-the ~250 characters below which v3 starts to drift. One generation per segment
-means a sentence's energy carries over the page break instead of resetting.
+Which is why narration is generated in *segments* of whole pages, planned by
+[`src/lib/narration.ts`](src/lib/narration.ts) - the first one short so the
+first words arrive quickly, later ones longer since they are fetched while the
+previous is still playing. One generation per segment means a sentence's energy
+carries over the page break instead of resetting, on either model. On the v2
+models the neighbouring pages are also passed as stitching context.
 
 ### Following the words
 
@@ -110,8 +121,18 @@ come sit back, and the page turns itself at the moment the voice reaches it.
 Words are maximal runs of non-whitespace, tokenised by the same function on both
 sides of the wire, so punctuation never gets orphaned.
 
-It is deliberately not a karaoke bar. A filled block sliding through the text is
-hard to read in a dark room and reads as a game rather than a book.
+Two details are what make it feel locked to the voice rather than to a timer.
+The highlight **arrives instantly and only fades out** - at speech rate most
+words last under a fifth of a second, so any cross-fade on the way in smears one
+word into the next and the whole line reads as a sweep. And it runs a fixed
+80 ms *ahead* of `currentTime`, which is the decode position rather than the
+moment sound leaves the speaker; the gap between those two is real, worst on
+Bluetooth, and reading along works better when the eye arrives a fraction before
+the ear anyway.
+
+It is deliberately not a karaoke bar - a filled block sliding through text is
+hard to read in a dark room and reads as a game rather than a book - and
+**Follow the words** in the reader turns it off entirely.
 
 With no ElevenLabs key the device voice takes over, and where the browser fires
 `onboundary` events it gets the same word-by-word highlighting.
@@ -155,16 +176,15 @@ src/
 
 ## Cost
 
-Roughly, per story: a few cents for the text. Narration on Eleven v3 runs about
-$0.10 per 1,000 characters - the same rate as multilingual v2 - so a 700-word
-story is around 40 cents the first time and free on every replay, since audio is
-cached locally.
+Roughly, per story: a few cents for the text. Narration runs about $0.10 per
+1,000 characters on multilingual v2 and on v3 alike, so a 700-word story is
+around 40 cents the first time and free on every replay, since audio is cached
+locally. Switching the expressive setting re-reads the story once, because the
+cache is keyed by mode.
 
 To cut narration cost roughly in half at some real expense to warmth, set
-`ELEVENLABS_TTS_MODEL=eleven_flash_v2_5`. The app adapts: it drops the audio
-tags that model would read out loud, and re-enables the `previous_text` /
-`next_text` stitching that v3 refuses. Word timings work the same on every
-model.
+`ELEVENLABS_TTS_MODEL=eleven_flash_v2_5`, which overrides the setting entirely.
+Word timings work the same on every model.
 
 ## Deploying
 
@@ -178,6 +198,10 @@ npx wrangler secret put ELEVENLABS_API_KEY
 npm run deploy
 ```
 
-Needs the Workers Paid plan: the free plan's 10 ms CPU ceiling is not enough to
-render a Next.js response. Nothing in the app is Cloudflare-specific, so it
-still deploys to Vercel unchanged.
+The free Workers plan is enough — the app shell is static assets, which never
+invoke the Worker, and the API routes are almost entirely waiting on Anthropic
+and ElevenLabs rather than burning CPU. [DEPLOY.md](DEPLOY.md) has the numbers,
+plus why Cloudflare Pages is not the free alternative it looks like.
+
+Nothing in the app is Cloudflare-specific, so it still deploys to Vercel
+unchanged.

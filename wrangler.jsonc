@@ -11,12 +11,11 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
-  // Writing a story is a long wait on Anthropic rather than a lot of CPU, but
-  // the default 30s ceiling is uncomfortably close for a story plus a page of
-  // narration. Configurable on the Workers Paid plan only.
-  "limits": {
-    "cpu_ms": 60000
-  },
+  // Left at the defaults so this deploys on the free plan. Somni spends its
+  // time waiting on Anthropic and ElevenLabs, which is not CPU, and the routes
+  // themselves measure in single-digit milliseconds - see DEPLOY.md. On the
+  // Workers Paid plan you can raise the ceiling if you ever need it:
+  //   "limits": { "cpu_ms": 60000 }
   "observability": {
     "enabled": true
   }

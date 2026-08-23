@@ -12,10 +12,11 @@ import type { PageTiming } from "./narration";
 const DB_NAME = "somni";
 /**
  * v2 replaced the per-page audio blobs with per-segment clips that also carry
- * word timings. Cached narration is always re-creatable from the story, so the
- * upgrade drops the old store rather than trying to migrate it.
+ * word timings; v3 added the voice mode to the clip key. Cached narration is
+ * always re-creatable from the story, so each upgrade drops the old store
+ * rather than trying to migrate it.
  */
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export const STORES = {
   profiles: "profiles",
@@ -30,6 +31,8 @@ export type ChildProfile = {
   age: number;
   themeId: string;
   voiceId: string | null;
+  /** Read with Eleven v3 instead of the model that stays closest to the clone. */
+  expressiveVoice?: boolean;
   createdAt: number;
 };
 
@@ -72,9 +75,10 @@ function openDb(): Promise<IDBDatabase> {
         store.createIndex("createdAt", "createdAt");
       }
       if (db.objectStoreNames.contains("audio")) db.deleteObjectStore("audio");
-      if (!db.objectStoreNames.contains(STORES.clips)) {
-        db.createObjectStore(STORES.clips);
+      if (db.objectStoreNames.contains(STORES.clips)) {
+        db.deleteObjectStore(STORES.clips);
       }
+      db.createObjectStore(STORES.clips);
       if (!db.objectStoreNames.contains(STORES.voices)) {
         db.createObjectStore(STORES.voices, { keyPath: "voiceId" });
       }
@@ -160,24 +164,23 @@ export type SavedClip = {
   pages: PageTiming[];
 };
 
-const clipKey = (storyId: string, segment: number, voiceId: string) =>
-  `${storyId}::${voiceId}::${segment}`;
+/**
+ * The mode is part of the key: the same page in the same voice is different
+ * audio under a different model, and serving the cached one back would make the
+ * setting look broken.
+ */
+export const clipKey = (
+  storyId: string,
+  segment: number,
+  voiceId: string,
+  mode: string,
+) => `${storyId}::${voiceId}::${mode}::${segment}`;
 
 export const clips = {
-  get: (storyId: string, segment: number, voiceId: string) =>
-    safe(
-      run<SavedClip | undefined>(STORES.clips, "readonly", (s) =>
-        s.get(clipKey(storyId, segment, voiceId)),
-      ),
-      undefined,
-    ),
-  put: (storyId: string, segment: number, voiceId: string, clip: SavedClip) =>
-    safe(
-      run(STORES.clips, "readwrite", (s) =>
-        s.put(clip, clipKey(storyId, segment, voiceId)),
-      ),
-      undefined,
-    ),
+  get: (key: string) =>
+    safe(run<SavedClip | undefined>(STORES.clips, "readonly", (s) => s.get(key)), undefined),
+  put: (key: string, clip: SavedClip) =>
+    safe(run(STORES.clips, "readwrite", (s) => s.put(clip, key)), undefined),
   async clearStory(storyId: string) {
     try {
       const db = await openDb();

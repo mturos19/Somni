@@ -42,16 +42,19 @@ export function StoryReader({
   saved,
   voiceId,
   voiceName,
+  expressive,
   onExit,
 }: {
   saved: SavedStory;
   voiceId: string | null;
   voiceName: string | null;
+  expressive: boolean;
   onExit: () => void;
 }) {
   const { story } = saved;
   const [slideIndex, setSlideIndex] = useState(0);
   const [autoTurn, setAutoTurn] = useState(true);
+  const [followWords, setFollowWords] = useState(true);
   const [showNotes, setShowNotes] = useState(false);
   const touchStartX = useRef<number | null>(null);
 
@@ -80,6 +83,7 @@ export function StoryReader({
     storyId: saved.id,
     pages: story.pages,
     voiceId,
+    expressive,
     autoAdvance: autoTurn,
     onPage: handleNarratedPage,
     onFinished: handleFinished,
@@ -216,7 +220,7 @@ export function StoryReader({
           {slide.kind === "page" && (
             <PageText
               text={story.pages[slide.index].text}
-              active={isPlayingHere && precise ? word : -1}
+              active={followWords && isPlayingHere && precise ? word : -1}
             />
           )}
 
@@ -293,7 +297,7 @@ export function StoryReader({
             </button>
           </div>
 
-          <div className="flex items-center justify-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="checkbox"
@@ -302,6 +306,15 @@ export function StoryReader({
                 className="h-4 w-4 accent-[var(--accent)]"
               />
               <span className="ink-soft">Read straight through</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={followWords}
+                onChange={(e) => setFollowWords(e.target.checked)}
+                className="h-4 w-4 accent-[var(--accent)]"
+              />
+              <span className="ink-soft">Follow the words</span>
             </label>
             <span className="ink-soft">
               {isLoadingHere

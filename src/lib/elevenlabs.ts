@@ -17,19 +17,27 @@ export function elevenLabsBase(): string {
 }
 
 /**
- * Eleven v3 is the expressive model, and the one that makes a cloned parent
- * sound like a person performing rather than a person reading. Two consequences
- * shape the rest of this file:
+ * Two ways to read a story, and they genuinely trade against each other.
  *
- * - v3 takes direction through inline audio tags, so each page carries one.
- * - v3 rejects `previous_text` / `next_text` outright, so continuity across a
- *   page turn has to come from narrating several pages in one generation.
+ * `faithful` is eleven_multilingual_v2: the model that stays closest to the
+ * recording a parent actually made. An Instant Voice Clone is two minutes of
+ * audio, and v2 renders it more conservatively - less performance, more the
+ * person. This is the default, because a child recognising the voice matters
+ * more than the voice acting well.
  *
- * Setting ELEVENLABS_TTS_MODEL back to a v2 model is supported and flips both
- * behaviours; it is flatter, but cheaper and faster.
+ * `expressive` is eleven_v3: markedly more alive, directed page by page with
+ * audio tags, and noticeably further from the source recording. Some clones
+ * carry it beautifully and some come back sounding processed, which is why this
+ * is a choice in the app rather than a decision made here.
+ *
+ * ELEVENLABS_TTS_MODEL overrides both.
  */
-export function ttsModel(): string {
-  return process.env.ELEVENLABS_TTS_MODEL ?? "eleven_v3";
+export type VoiceMode = "faithful" | "expressive";
+
+export function ttsModel(mode: VoiceMode): string {
+  const override = process.env.ELEVENLABS_TTS_MODEL;
+  if (override) return override;
+  return mode === "expressive" ? "eleven_v3" : "eleven_multilingual_v2";
 }
 
 export const isV3 = (model: string) => model.startsWith("eleven_v3");
@@ -61,11 +69,7 @@ export function tagFor(mood: string, model: string): string {
   return MOOD_TAGS[mood] ?? MOOD_TAGS.calm;
 }
 
-/**
- * Pace, by mood. A story that quickens for the brave page and slows for the
- * last one does more for the illusion of a person reading than any amount of
- * parameter tuning.
- */
+/** Pace, by mood. Only applied in expressive mode. */
 const MOOD_SPEED: Record<string, number> = {
   calm: 0.95,
   playful: 1.0,
@@ -77,22 +81,34 @@ const MOOD_SPEED: Record<string, number> = {
 /**
  * Settings for one generation.
  *
- * stability 0.5 is v3's "Natural" - the setting that stays closest to the
- * recording the parent actually made. Lower is more theatrical but starts
- * inventing; higher flattens the clone into the monotone this app exists to
- * avoid. Style stays at zero because on v3 expression comes from the tags, and
- * exaggeration on top of a two-minute clone mostly buys artefacts.
+ * The faithful numbers are not tuned for expression and should not be: steady,
+ * warm, unhurried, and as near the parent's own recording as an instant clone
+ * gets. Every one of them - including the flat 0.92 - is deliberate. Varying
+ * speed by mood here is what starts to sound edited rather than read.
  */
 export function voiceSettingsFor(moods: string[], model: string) {
+  if (!isV3(model)) {
+    return {
+      stability: 0.55,
+      similarity_boost: 0.8,
+      style: 0.1,
+      speed: 0.92,
+      use_speaker_boost: true,
+    };
+  }
+
   const speeds = moods.map((mood) => MOOD_SPEED[mood] ?? 0.95);
   const speed = speeds.length
     ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length
     : 0.95;
 
   return {
-    stability: isV3(model) ? 0.5 : 0.55,
+    // v3's "Natural" - the setting that stays closest to the source recording.
+    stability: 0.5,
     similarity_boost: 0.8,
-    style: isV3(model) ? 0 : 0.1,
+    // Expression comes from the tags on v3; exaggeration on top of a
+    // two-minute clone mostly buys artefacts.
+    style: 0,
     speed: Math.round(speed * 100) / 100,
     use_speaker_boost: true,
   };
