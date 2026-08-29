@@ -12,6 +12,13 @@ const MAX_SAMPLE_BYTES = 12 * 1024 * 1024; // per file
 const MAX_TOTAL_BYTES = 40 * 1024 * 1024;
 
 /**
+ * Above this, the quiet between sentences is audible enough to be worth
+ * removing. Below it, isolating would cost more in dynamics than it recovers.
+ * Measured on the same 0-1 scale the recording meter uses.
+ */
+const NOISE_FLOOR_LIMIT = 0.02;
+
+/**
  * Creates an Instant Voice Clone from recordings the parent made in the browser.
  *
  * The consent gate lives in the UI, but we re-check the affirmation here so the
@@ -62,14 +69,28 @@ export async function POST(request: Request) {
       );
     }
 
+    /**
+     * The isolation model is applied only when the room warranted it.
+     *
+     * ElevenLabs are explicit that on a clean sample it makes the result worse,
+     * and it is not free either way - it is another pass of processing over the
+     * dynamics a clone learns delivery from. The browser measures the quietest
+     * moment of each take, which is the room rather than the speaker, and sends
+     * it here. A hush stays untouched; a kitchen gets cleaned up.
+     */
+    const noiseFloor = Number(incoming.get("noiseFloor") ?? "0");
+    const noisy = Number.isFinite(noiseFloor) && noiseFloor > NOISE_FLOOR_LIMIT;
+
     const outgoing = new FormData();
     outgoing.append("name", name);
     outgoing.append(
       "description",
       "A parent's voice, recorded for reading bedtime stories.",
     );
-    // Background isolation helps more than it hurts on phone/laptop mics.
-    outgoing.append("remove_background_noise", "true");
+    // Appended only when wanted. A multipart "false" is a string, and whether
+    // an upstream parser reads that as false or merely as present is not worth
+    // betting the clone on - the API's own default is off.
+    if (noisy) outgoing.append("remove_background_noise", "true");
     for (const sample of samples) {
       outgoing.append("files", sample, sample.name || "sample.webm");
     }
@@ -91,6 +112,7 @@ export async function POST(request: Request) {
       voiceId: data.voice_id,
       name,
       requiresVerification: Boolean(data.requires_verification),
+      isolated: noisy,
     });
   } catch (err) {
     return errorResponse(err);

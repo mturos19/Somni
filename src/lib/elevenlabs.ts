@@ -100,13 +100,19 @@ const MOOD_SPEED: Record<string, number> = {
  */
 export function voiceSettingsFor(mode: VoiceMode, moods: string[], model: string) {
   if (!isV3(model)) {
-    const stability = mode === "steady" ? 0.6 : 0.4;
+    const steady = mode === "steady";
     return {
-      stability,
+      // Lower than it looks like it should be, on purpose. Stability is really
+      // a sameness control: it suppresses variation between generations, and
+      // intonation is variation. 0.3 is about as far down as an instant clone
+      // goes before it starts wandering, and it is the difference between a
+      // voice reading and a voice performing.
+      stability: steady ? 0.5 : 0.3,
       similarity_boost: 0.75,
-      // A little style keeps the delivery habits from the parent's own
-      // recording instead of averaging them away.
-      style: mode === "steady" ? 0.05 : 0.2,
+      // Style exaggerates the delivery habits in the source recording rather
+      // than inventing new ones - which only works if the recording kept its
+      // dynamics. See the capture settings in VoiceStudio.
+      style: steady ? 0.1 : 0.35,
       speed: 0.88,
       use_speaker_boost: true,
     };

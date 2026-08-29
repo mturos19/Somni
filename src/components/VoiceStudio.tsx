@@ -12,12 +12,12 @@ const VOICE_MODES: { id: VoiceMode; label: string; blurb: string }[] = [
   {
     id: "steady",
     label: "Steady",
-    blurb: "Plain and even. The safest read, and the flattest.",
+    blurb: "Even and predictable. Safest, and the flattest.",
   },
   {
     id: "natural",
     label: "Natural",
-    blurb: "Real intonation, still unmistakably you. Start here.",
+    blurb: "Lets your intonation through, still unmistakably you. Start here.",
   },
   {
     id: "lively",
@@ -43,25 +43,37 @@ const PASSAGES = [
     title: "Warm and ordinary",
     direction:
       "Out loud, at normal volume, the way you would actually talk to your child. Not a reading voice.",
-    text: `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. Nobody thought anything of it. The postman walked past it twice a day. But on the last Tuesday of every month, if you happened to be looking at exactly the right moment, the gate would swing open all on its own, and something small and quick would slip out into the garden and disappear behind the roses.`,
+    text: `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. Nobody thought anything of it. The postman walked past it twice a day and never once looked up. But on the last Tuesday of every month, if you happened to be looking at exactly the right moment, the gate would swing open all on its own, and something small and quick would slip out into the garden and disappear behind the roses.
+
+Nobody in that house ever mentioned it. Not at breakfast, not at bedtime, not even on the Tuesday itself. The grandmother would simply glance at the window, and then at the clock, and then she would put the kettle on and say, well, there we are. And that, apparently, was that.`,
   },
   {
     id: "playful",
     title: "Bright and playful",
     direction:
-      "Bigger and sillier. Do the duck. Let your voice jump around - this is the range the clone will borrow from.",
-    text: `Well! said the duck, who was not used to being interrupted. That is the third time this morning! She flapped once, twice, and then, because she was a duck of considerable drama, a third time for good measure. Everyone stop where you are! she shouted. Somebody has stolen my extremely important hat, and I intend to find it before lunch!`,
+      "Bigger and sillier. Do the duck. Let your voice jump around - this is the range the clone borrows from, so give it something to borrow.",
+    text: `Well! said the duck, who was not used to being interrupted. That is the third time this morning! She flapped once, twice, and then, because she was a duck of considerable drama, a third time for good measure. Everyone stop where you are! she shouted. Somebody has stolen my extremely important hat, and I intend to find it before lunch!
+
+The frog raised one hand, very slowly. It is on your head, he said. There was a pause. It was a long pause. It was, in fact, the longest pause that pond had ever known. So it is, said the duck. Well. That proves it. Somebody put it there. And off she went, enormously pleased with herself, to tell absolutely everybody.`,
   },
   {
     id: "sleepy",
     title: "Slow and sleepy",
     direction:
-      "The bedtime voice. Quiet, unhurried, almost a whisper. This is the one it will use most.",
-    text: `The lanterns went out one by one, and the harbour went quiet, and the little boat rocked so gently that you could barely tell it was moving at all. Somewhere far off, a bell rang twice, and then did not ring again. It was very late now. The sea breathed in, and out, and in again, and everybody who was still awake decided, quietly, that they no longer were.`,
+      "The bedtime voice. Quiet, unhurried, almost a whisper. This is the one it will use most, so take your time over it.",
+    text: `The lanterns went out one by one, and the harbour went quiet, and the little boat rocked so gently that you could barely tell it was moving at all. Somewhere far off, a bell rang twice, and then did not ring again. It was very late now. The sea breathed in, and out, and in again, and everybody who was still awake decided, quietly, that they no longer were.
+
+The lamp in the window went out. The cat on the wall folded herself into a smaller and smaller shape until she was mostly just a shadow with opinions. And the tide came up the beach the way it always does, slowly, and without any particular hurry, and took the day away with it.`,
   },
 ] as const;
 
-type Recording = { blob: Blob; url: string; seconds: number };
+type Recording = {
+  blob: Blob;
+  url: string;
+  seconds: number;
+  /** Quietest moment in the take, which is the room rather than the speaker. */
+  noiseFloor: number;
+};
 
 /**
  * Long enough for Eleven v3 to settle, and written to expose a flat clone:
@@ -133,6 +145,7 @@ export function VoiceStudio({
   const meterRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
+  const noiseFloorRef = useRef(1);
   const recordingsRef = useRef(recordings);
   const previewRef = useRef<{ el: HTMLAudioElement; url: string } | null>(null);
 
@@ -224,11 +237,29 @@ export function VoiceStudio({
   async function startRecording(passageId: string) {
     setError(null);
     try {
+      /**
+       * Every processor here is off on purpose, and this is the single most
+       * important thing in the file.
+       *
+       * Browsers default this trio on because the assumption is a video call.
+       * Echo cancellation, noise suppression and automatic gain are tuned to
+       * make speech intelligible on a bad line: they gate quiet passages,
+       * compress loud ones and level everything in between. That is precisely
+       * the dynamic range a voice clone learns delivery from - so leaving them
+       * on hands the model a flattened performance and then asks it to sound
+       * alive. It cannot. It has never heard the parent get quiet.
+       *
+       * Recording raw means the room is audible, which is what the noise floor
+       * measurement below is for: the isolation model runs later, once, on the
+       * whole sample, instead of frame by frame while the dynamics are being
+       * destroyed.
+       */
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1,
         },
       });
       streamRef.current = stream;
@@ -246,6 +277,7 @@ export function VoiceStudio({
       const samples = new Uint8Array(analyser.fftSize);
       let shown = 0;
       let loudestSoFar = 0;
+      let quietestSoFar = 1;
       /** Latched, so the check does not set state on every single frame. */
       let verdict: boolean | null = null;
       // The audio context's own clock, rather than a wall clock: it is exact,
@@ -266,6 +298,14 @@ export function VoiceStudio({
         const level = Math.min(1, rms * 4.5);
         loudestSoFar = Math.max(loudestSoFar, level);
 
+        // The quietest moment after the first second is the gap between
+        // sentences - which is to say, the room. It decides later whether the
+        // sample needs isolating or is already clean enough to leave alone.
+        if (ctx.currentTime - startedAt > 1) {
+          quietestSoFar = Math.min(quietestSoFar, level);
+          noiseFloorRef.current = quietestSoFar;
+        }
+
         // Fast to rise, slow to fall - how a real meter behaves, and what stops
         // it flickering between syllables.
         shown = level > shown ? level : shown + (level - shown) * 0.12;
@@ -285,7 +325,12 @@ export function VoiceStudio({
       tick();
 
       const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      // Opus defaults vary by browser and some are low enough that codec
+      // artefacts reach the clone. This is cheap insurance on a two-minute file.
+      const recorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 128000,
+      });
       recorderRef.current = recorder;
 
       const chunks: BlobPart[] = [];
@@ -298,12 +343,16 @@ export function VoiceStudio({
         // Length comes from the same counter that drives the on-screen timer,
         // so the two can never disagree.
         const seconds = elapsedRef.current;
+        const noiseFloor = noiseFloorRef.current;
         // The URL is minted outside the updater so a double-invoked updater in
         // StrictMode cannot orphan one.
         const url = URL.createObjectURL(blob);
         const previous = recordingsRef.current[passageId];
         if (previous) URL.revokeObjectURL(previous.url);
-        setRecordings((prev) => ({ ...prev, [passageId]: { blob, url, seconds } }));
+        setRecordings((prev) => ({
+          ...prev,
+          [passageId]: { blob, url, seconds, noiseFloor },
+        }));
         teardownMic();
       };
 
@@ -313,6 +362,7 @@ export function VoiceStudio({
       setSilent(false);
       setRecordingId(passageId);
       elapsedRef.current = 0;
+      noiseFloorRef.current = 1;
       setElapsed(0);
       timerRef.current = setInterval(() => {
         elapsedRef.current += 1;
@@ -336,6 +386,19 @@ export function VoiceStudio({
 
   const recordedCount = Object.keys(recordings).length;
   const totalSeconds = Object.values(recordings).reduce((sum, r) => sum + r.seconds, 0);
+
+  /**
+   * How much the clone has to work with. Instant cloning will accept under a
+   * minute and produce something recognisable but lifeless; the difference
+   * between a passable clone and a convincing one is mostly just more audio,
+   * so it is worth saying so while there is still a microphone open.
+   */
+  const audioVerdict =
+    totalSeconds >= 150
+      ? { text: "Plenty to work with.", tone: "var(--accent)" }
+      : totalSeconds >= 75
+        ? { text: "Enough, but another passage would help.", tone: "var(--accent-2)" }
+        : { text: "Thin. Expect a flat clone below about a minute.", tone: "var(--ink-soft)" };
   const canClone = consent && recordedCount > 0 && voiceName.trim().length > 0;
 
   async function createVoice() {
@@ -348,6 +411,13 @@ export function VoiceStudio({
       const form = new FormData();
       form.append("name", voiceName.trim());
       form.append("consent", "own-voice-confirmed");
+      // The noisiest take decides for the set: they are cloned together.
+      form.append(
+        "noiseFloor",
+        String(
+          Math.max(...Object.values(recordings).map((rec) => rec.noiseFloor), 0),
+        ),
+      );
       for (const [passageId, rec] of Object.entries(recordings)) {
         const ext = extensionFor(rec.blob.type);
         form.append("samples", rec.blob, `${passageId}.${ext}`);
@@ -677,10 +747,21 @@ export function VoiceStudio({
               >
                 {cloning ? "Creating your voice..." : "Create my voice"}
               </button>
-              <span className="ink-soft text-xs">
-                {recordedCount === 0
-                  ? "Record at least one passage. All three gives the best result."
-                  : `${recordedCount} of 3 recorded  ·  ${totalSeconds}s of audio`}
+              <span className="text-xs">
+                {recordedCount === 0 ? (
+                  <span className="ink-soft">
+                    Record at least one passage. All three gives the best result.
+                  </span>
+                ) : (
+                  <>
+                    <span className="ink-soft">
+                      {recordedCount} of 3 · {totalSeconds}s of audio ·{" "}
+                    </span>
+                    <span style={{ color: audioVerdict.tone }}>
+                      {audioVerdict.text}
+                    </span>
+                  </>
+                )}
               </span>
             </div>
           </fieldset>

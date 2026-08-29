@@ -53,6 +53,60 @@ type Options = {
  */
 const HIGHLIGHT_LEAD_SECONDS = 0.08;
 
+type Ready = {
+  index: number;
+  el: HTMLAudioElement;
+  url: string;
+  clip: SavedClip;
+};
+
+/**
+ * Segments decoded ahead of time, keyed by the reading they belong to.
+ *
+ * Deliberately not a ref. A prepared clip is a live audio element that has to
+ * be seeked, wired up and played on adoption, and React's immutability rule
+ * treats everything read out of a ref as off limits to mutation. Keeping it
+ * here says the true thing anyway: this is a decoder cache, not state, and
+ * nothing renders from it.
+ */
+const prepared = new Map<string, Ready>();
+
+function releasePrepared(key: string) {
+  const ready = prepared.get(key);
+  if (!ready) return;
+  prepared.delete(key);
+  ready.el.onerror = null;
+  ready.el.pause();
+  ready.el.removeAttribute("src");
+  URL.revokeObjectURL(ready.url);
+}
+
+/** An audio element with its metadata already loaded, ready to play at once. */
+async function decodeClip(clip: SavedClip, rate: number): Promise<{ el: HTMLAudioElement; url: string }> {
+  const url = URL.createObjectURL(clip.audio);
+  const el = new Audio();
+  el.preload = "auto";
+  // Keep the voice's pitch when slowed down; Safari needs the prefix.
+  el.preservesPitch = true;
+  (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+  el.playbackRate = rate;
+  el.src = url;
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      el.onloadedmetadata = () => resolve();
+      el.onerror = () => reject(new Error("That narration would not play."));
+    });
+  } catch (err) {
+    URL.revokeObjectURL(url);
+    throw err;
+  }
+
+  el.onloadedmetadata = null;
+  el.onerror = null;
+  return { el, url };
+}
+
 function scaleTimings(pages: PageTiming[], factor: number): PageTiming[] {
   if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - 1) < 0.02) return pages;
   return pages.map((page) => ({
@@ -98,6 +152,8 @@ export function useNarrator({
   const [error, setError] = useState<string | null>(null);
 
   const segments = useMemo(() => planSegments(pages), [pages]);
+  /** Identifies this reading's decoded-ahead segment. See `prepared`. */
+  const readyKey = `${storyId}::${voiceId}::${mode}::${saysLike}`;
 
   const elementRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
@@ -105,6 +161,7 @@ export function useNarrator({
   const segmentRef = useRef(-1);
   /** Last page handed to the reader, so a frame that changes nothing costs nothing. */
   const shownRef = useRef(-1);
+
   const rafRef = useRef<number | null>(null);
   /**
    * One request per segment, shared by everyone who asks for it. Narration is
@@ -152,6 +209,7 @@ export function useNarrator({
 
   const teardown = useCallback(() => {
     cancelFrame();
+    releasePrepared(readyKey);
 
     if (elementRef.current) {
       elementRef.current.onended = null;
@@ -168,7 +226,7 @@ export function useNarrator({
     timingRef.current = null;
     segmentRef.current = -1;
     if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
-  }, [cancelFrame]);
+  }, [cancelFrame, readyKey]);
 
   const stop = useCallback(() => {
     runRef.current += 1;
@@ -309,26 +367,23 @@ export function useNarrator({
 
   const playSegment = useCallback(
     async (index: number, fromPage: number, run: number) => {
-      const clip = await fetchClip(index);
+      // Warmed while the previous segment was still playing: nothing to fetch,
+      // nothing to decode, so the seam between them is silent.
+      const candidate = prepared.get(readyKey);
+      const warm = candidate?.index === index ? candidate : null;
+      if (warm) prepared.delete(readyKey);
+
+      const clip = warm ? warm.clip : await fetchClip(index);
       if (runRef.current !== run) return;
 
-      const url = URL.createObjectURL(clip.audio);
-      const el = new Audio();
-      el.preload = "auto";
-      // Keep the voice's pitch when slowed down; Safari needs the prefix.
-      el.preservesPitch = true;
-      (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
-      el.playbackRate = rateRef.current;
-      el.src = url;
-
-      await new Promise<void>((resolve, reject) => {
-        el.onloadedmetadata = () => resolve();
-        el.onerror = () => reject(new Error("That narration would not play."));
-      });
+      const decoded = warm ?? (await decodeClip(clip, rateRef.current));
       if (runRef.current !== run) {
-        URL.revokeObjectURL(url);
+        if (!warm) URL.revokeObjectURL(decoded.url);
         return;
       }
+
+      const el = decoded.el;
+      const url = decoded.url;
 
       // Chaining into the next segment replaces the element, so let go of the
       // last one rather than leaving its blob URL alive for the whole story.
@@ -342,6 +397,9 @@ export function useNarrator({
       urlRef.current = url;
       elementRef.current = el;
       segmentRef.current = index;
+      // A warmed element was decoded at whatever rate was set then; the reader
+      // may have changed it since.
+      elementRef.current.playbackRate = rateRef.current;
 
       // Estimated timings get stretched onto the real duration; exact ones are
       // already on the audio's own clock.
@@ -392,10 +450,26 @@ export function useNarrator({
       setState("playing");
       follow(run);
 
-      // Warm the next segment while this one plays, so the seam stays silent.
-      if (index + 1 < segments.length) prefetch(segments[index + 1].pages[0]);
+      // Fetch *and* decode the next segment while this one plays.
+      const next = index + 1;
+      if (next < segments.length && prepared.get(readyKey)?.index !== next) {
+        void (async () => {
+          try {
+            const upcoming = await fetchClip(next);
+            if (runRef.current !== run || prepared.has(readyKey)) return;
+            const decoded = await decodeClip(upcoming, rateRef.current);
+            if (runRef.current !== run) {
+              URL.revokeObjectURL(decoded.url);
+              return;
+            }
+            prepared.set(readyKey, { index: next, clip: upcoming, ...decoded });
+          } catch {
+            /* a failed warm-up just means the normal path runs at the seam */
+          }
+        })();
+      }
     },
-    [cancelFrame, fetchClip, follow, prefetch, segments],
+    [cancelFrame, fetchClip, follow, readyKey, segments],
   );
 
   useEffect(() => {
