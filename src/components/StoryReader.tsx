@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNarrator } from "@/lib/useNarrator";
 import { tokenize } from "@/lib/narration";
 import type { SavedStory } from "@/lib/storage";
@@ -17,7 +17,20 @@ type Slide =
  * follow, so `active` of -1 renders every word in the same resting state and
  * the page reads exactly as it would have as a plain paragraph.
  */
-function PageText({ text, active }: { text: string; active: number }) {
+/** Three settings, not a slider: at bedtime a tap beats a drag. */
+const SPEEDS = [
+  { label: "Slower", value: 0.85 },
+  { label: "Normal", value: 1 },
+  { label: "Faster", value: 1.12 },
+] as const;
+
+const PageText = memo(function PageText({
+  text,
+  active,
+}: {
+  text: string;
+  active: number;
+}) {
   const tokens = useMemo(() => tokenize(text), [text]);
 
   return (
@@ -36,19 +49,62 @@ function PageText({ text, active }: { text: string; active: number }) {
       })}
     </p>
   );
-}
+});
+
+/**
+ * The dot strip. Memoised because the reader above it re-renders several times
+ * a second while a page is being spoken, and redrawing a dozen buttons on every
+ * word is work nobody asked for.
+ */
+const Progress = memo(function Progress({
+  count,
+  current,
+  onGo,
+}: {
+  count: number;
+  current: number;
+  onGo: (index: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      {Array.from({ length: count }, (_, index) => (
+        <button
+          key={index}
+          type="button"
+          aria-label={`Go to slide ${index + 1}`}
+          onClick={() => onGo(index)}
+          className="h-1.5 rounded-full transition-all"
+          style={{
+            width: index === current ? 24 : 8,
+            background: index === current ? "var(--accent)" : "var(--card-strong)",
+          }}
+        />
+      ))}
+    </div>
+  );
+});
 
 export function StoryReader({
   saved,
   voiceId,
   voiceName,
-  expressive,
+  mode,
+  childName,
+  saysLike,
+  rate,
+  onRateChange,
+  onProgress,
   onExit,
 }: {
   saved: SavedStory;
   voiceId: string | null;
   voiceName: string | null;
-  expressive: boolean;
+  mode: "steady" | "natural" | "lively";
+  childName: string;
+  saysLike: string;
+  rate: number;
+  onRateChange: (rate: number) => void;
+  onProgress: (page: number) => void;
   onExit: () => void;
 }) {
   const { story } = saved;
@@ -70,6 +126,25 @@ export function StoryReader({
   const slide = slides[slideIndex];
   const lastIndex = slides.length - 1;
 
+  /** Where a previous reading got to, if it stopped part-way through. */
+  const resumeAt =
+    saved.lastPage !== undefined &&
+    saved.lastPage > 0 &&
+    saved.lastPage < story.pages.length
+      ? saved.lastPage
+      : null;
+
+  // Remember the page while it is being read, not only when the reader closes.
+  const progressRef = useRef(onProgress);
+  useEffect(() => {
+    progressRef.current = onProgress;
+  }, [onProgress]);
+
+  useEffect(() => {
+    if (slide.kind === "page") progressRef.current(slide.index);
+    if (slide.kind === "end") progressRef.current(0);
+  }, [slide]);
+
   // Narration owns the page while it is reading: slide n+1 holds page n.
   const handleNarratedPage = useCallback((page: number) => {
     setSlideIndex(page + 1);
@@ -83,7 +158,10 @@ export function StoryReader({
     storyId: saved.id,
     pages: story.pages,
     voiceId,
-    expressive,
+    mode,
+    childName,
+    saysLike,
+    rate,
     autoAdvance: autoTurn,
     onPage: handleNarratedPage,
     onFinished: handleFinished,
@@ -180,6 +258,59 @@ export function StoryReader({
       {showNotes && (
         <div className="relative z-10 mx-auto mt-3 w-full max-w-2xl px-5">
           <div className="glass animate-rise rounded-2xl p-4 text-sm">
+            {/* Reading settings live here rather than under the story, so the
+                page itself stays quiet while a child is looking at it. */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pb-4">
+              <div className="flex items-center gap-2">
+                <span className="ink-soft text-xs">Speed</span>
+                <div
+                  className="flex rounded-full p-0.5"
+                  style={{ background: "var(--card-strong)" }}
+                >
+                  {SPEEDS.map((option) => {
+                    const on = Math.abs(rate - option.value) < 0.01;
+                    return (
+                      <button
+                        key={option.label}
+                        type="button"
+                        onClick={() => onRateChange(option.value)}
+                        aria-pressed={on}
+                        className="rounded-full px-3 py-1 text-xs font-semibold transition"
+                        style={{
+                          background: on ? "var(--accent)" : "transparent",
+                          color: on ? "var(--accent-ink)" : "var(--ink)",
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={autoTurn}
+                  onChange={(e) => setAutoTurn(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                <span className="ink-soft">Read straight through</span>
+              </label>
+
+              <label className="flex cursor-pointer items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={followWords}
+                  onChange={(e) => setFollowWords(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                <span className="ink-soft">Follow the words</span>
+              </label>
+            </div>
+
+            <div className="mb-4 h-px" style={{ background: "var(--border)" }} />
+
             <p>{story.parentNote}</p>
             {story.stretchWords.length > 0 && (
               <dl className="mt-3 space-y-1">
@@ -214,6 +345,19 @@ export function StoryReader({
               >
                 {story.dedication}
               </p>
+
+              {resumeAt !== null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSlideIndex(resumeAt + 1);
+                    void play(resumeAt);
+                  }}
+                  className="glass animate-rise mt-8 rounded-full px-5 py-3 text-sm font-semibold"
+                >
+                  Carry on from page {resumeAt + 1}
+                </button>
+              )}
             </>
           )}
 
@@ -239,23 +383,7 @@ export function StoryReader({
       {/* Controls */}
       <footer className="relative z-10 px-5 pb-7">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
-          {/* Progress */}
-          <div className="flex items-center justify-center gap-1.5">
-            {slides.map((_, index) => (
-              <button
-                key={index}
-                type="button"
-                aria-label={`Go to slide ${index + 1}`}
-                onClick={() => goTo(index)}
-                className="h-1.5 rounded-full transition-all"
-                style={{
-                  width: index === slideIndex ? 24 : 8,
-                  background:
-                    index === slideIndex ? "var(--accent)" : "var(--card-strong)",
-                }}
-              />
-            ))}
-          </div>
+          <Progress count={slides.length} current={slideIndex} onGo={goTo} />
 
           {narrator.error && (
             <p className="text-center text-xs" style={{ color: "#ff9d9d" }}>
@@ -297,25 +425,7 @@ export function StoryReader({
             </button>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={autoTurn}
-                onChange={(e) => setAutoTurn(e.target.checked)}
-                className="h-4 w-4 accent-[var(--accent)]"
-              />
-              <span className="ink-soft">Read straight through</span>
-            </label>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={followWords}
-                onChange={(e) => setFollowWords(e.target.checked)}
-                className="h-4 w-4 accent-[var(--accent)]"
-              />
-              <span className="ink-soft">Follow the words</span>
-            </label>
+          <div className="flex items-center justify-center text-xs">
             <span className="ink-soft">
               {isLoadingHere
                 ? "Warming up your voice..."

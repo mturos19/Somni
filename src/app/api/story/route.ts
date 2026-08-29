@@ -47,6 +47,19 @@ function describe(err: unknown): { error: string; hint?: string } {
 }
 
 /**
+ * A failure worth one more attempt: the model produced text that would not read
+ * back as a story. Authentication, rate limits and connectivity are not - those
+ * fail the same way twice and only cost the parent another minute of waiting.
+ */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof Anthropic.AuthenticationError) return false;
+  if (err instanceof Anthropic.PermissionDeniedError) return false;
+  if (err instanceof Anthropic.RateLimitError) return false;
+  if (err instanceof Anthropic.APIConnectionError) return false;
+  return true;
+}
+
+/**
  * Writes tonight's story, reporting progress as it goes.
  *
  * A good story takes Opus a couple of minutes of real thinking, and a parent
@@ -79,15 +92,15 @@ export async function POST(request: Request) {
   const req = parsed.data;
   const spec = ageSpec(req.age);
 
-  // What a finished story of this size usually weighs on the wire - the read
-  // aloud text plus the scene notes, moods and JSON scaffolding around it.
-  // Calibrated against real generations; only ever used to move a progress bar,
-  // so landing within ten percent is plenty.
+  // What a finished story of this size weighs on the wire: the read aloud text,
+  // the moods, and the JSON around them. Re-measured across ages four and seven
+  // after the unused scene field came out. Only ever used to move a progress
+  // bar, so landing within ten percent is plenty.
   const expectedChars = Math.round(
     ((spec.pageCount[0] + spec.pageCount[1]) / 2) *
       ((spec.wordsPerPage[0] + spec.wordsPerPage[1]) / 2) *
-      9.8 +
-      400,
+      6.9 +
+      300,
   );
 
   const client = new Anthropic();
@@ -96,16 +109,30 @@ export async function POST(request: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let open = true;
+
+      /**
+       * Never throws. The heartbeat fires from a timer, outside the try
+       * below, and enqueueing onto a stream the browser has already walked
+       * away from raises - which would take the whole request down instead
+       * of letting it end quietly.
+       */
       const send = (event: Record<string, unknown>) => {
         if (!open) return;
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          open = false;
+        }
       };
 
       const heartbeat = setInterval(() => send({ type: "tick" }), HEARTBEAT_MS);
 
-      try {
-        send({ type: "start", expectedChars });
-
+      /**
+       * One attempt at a story. False means the model produced something that
+       * could not be read back as a story - a bad roll rather than a broken
+       * request, and so worth trying once more.
+       */
+      const attempt = async (): Promise<boolean> => {
         const message = client.beta.messages.stream(
           {
             model: "claude-opus-5",
@@ -125,7 +152,19 @@ export async function POST(request: Request) {
             messages: [{ role: "user", content: buildStoryPrompt(req) }],
             output_config: {
               format: betaZodOutputFormat(StorySchema),
-              effort: "high",
+              /**
+               * Measured, not assumed. Against `high`, on identical briefs:
+               *
+               *   age 4   20s / 1.2k output tokens   vs   51s / 3.3k
+               *   age 7   88s / 5.4k                 vs  178s / 14.3k
+               *
+               * Both stayed inside the age spec for page count and words per
+               * page in every run. `high` spent three to four times the tokens
+               * deliberating and bought nothing measurable, while a child sat
+               * waiting. The craft in these stories comes from the system
+               * prompt, not from the effort dial.
+               */
+              effort: "medium",
             },
           },
           { signal: request.signal },
@@ -158,26 +197,15 @@ export async function POST(request: Request) {
             error: "The story writer stopped part-way through that one.",
             hint: "Try softening the custom description, then ask again.",
           });
-          return;
-        }
-        if (final.stop_reason === "max_tokens") {
-          send({
-            type: "error",
-            error: "The story ran longer than expected and got cut off.",
-            hint: "Please try again.",
-          });
-          return;
+          return true; // Answered. Retrying would only refuse again.
         }
 
+        // Truncation and malformed output both land here, and both are worth
+        // one more roll of the dice rather than an apology.
+        if (final.stop_reason === "max_tokens") return false;
+
         const story = final.parsed_output;
-        if (!story || story.pages.length === 0) {
-          send({
-            type: "error",
-            error: "The story came back in a shape we could not read.",
-            hint: "Please try again.",
-          });
-          return;
-        }
+        if (!story || story.pages.length === 0) return false;
 
         send({
           type: "story",
@@ -193,6 +221,40 @@ export async function POST(request: Request) {
             },
           },
         });
+        return true;
+      };
+
+      try {
+        send({ type: "start", expectedChars });
+
+        for (let tries = 0; tries < 2; tries += 1) {
+          let answered = false;
+
+          try {
+            answered = await attempt();
+          } catch (err) {
+            // The SDK raises when the model's JSON will not parse against the
+            // schema. That is the "invalid JSON" a parent used to see, and it
+            // is transient - so it is retried rather than reported.
+            if (request.signal.aborted || !isRetryable(err) || tries === 1) throw err;
+            console.warn("[story] unreadable output, retrying", err);
+          }
+
+          if (answered) return;
+
+          if (tries === 0) {
+            send({ type: "retry" });
+            send({ type: "phase", phase: "thinking" });
+            continue;
+          }
+
+          send({
+            type: "error",
+            error: "The story came back in a shape we could not read.",
+            hint: "That is usually a one-off. Please try again.",
+          });
+          return;
+        }
       } catch (err) {
         // A parent closing the tab is not a failure worth reporting.
         if (!request.signal.aborted) send({ type: "error", ...describe(err) });

@@ -5,6 +5,10 @@ import { labelsFor } from "./elements";
 /**
  * Structured shape the model must return. Kept deliberately flat and free of
  * optional/default fields, which is what strict JSON-schema output wants.
+ *
+ * Every field here is read by something. Nothing is generated speculatively:
+ * output tokens are the whole of the wait a parent sits through, so a field
+ * nobody displays is latency charged to them for nothing.
  */
 export const StorySchema = z.object({
   title: z.string(),
@@ -12,7 +16,6 @@ export const StorySchema = z.object({
   pages: z.array(
     z.object({
       text: z.string(),
-      scene: z.string(),
       mood: z.enum(["calm", "playful", "wonder", "brave", "sleepy"]),
     }),
   ),
@@ -149,9 +152,6 @@ export function buildStoryPrompt(req: StoryRequest): string {
   );
   lines.push(
     `- pages[].text: the words to be read aloud, and nothing else. No page numbers, no labels.`,
-  );
-  lines.push(
-    `- pages[].scene: one plain sentence describing what an illustration on this page would show. This is never read aloud.`,
   );
   lines.push(`- pages[].mood: the emotional colour of the page.`);
   lines.push(

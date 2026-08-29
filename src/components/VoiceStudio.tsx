@@ -5,6 +5,27 @@ import { decodeNarration } from "@/lib/audio";
 import { voices as voiceStore, type SavedVoice } from "@/lib/storage";
 import type { SpeakRequest } from "@/lib/narration";
 
+/** Kept in step with VoiceMode in elevenlabs.ts, which is server-only. */
+type VoiceMode = "steady" | "natural" | "lively";
+
+const VOICE_MODES: { id: VoiceMode; label: string; blurb: string }[] = [
+  {
+    id: "steady",
+    label: "Steady",
+    blurb: "Plain and even. The safest read, and the flattest.",
+  },
+  {
+    id: "natural",
+    label: "Natural",
+    blurb: "Real intonation, still unmistakably you. Start here.",
+  },
+  {
+    id: "lively",
+    label: "Lively",
+    blurb: "Acts the story out. Livelier, and further from your recording.",
+  },
+];
+
 /**
  * Three passages rather than one long read. Varied prosody - warm, playful,
  * then slow and sleepy - gives the clone a much better range than a minute of
@@ -72,15 +93,15 @@ function extensionFor(mime: string): string {
 export function VoiceStudio({
   available,
   selectedVoiceId,
-  expressive,
-  onExpressiveChange,
+  mode,
+  onModeChange,
   onSelectVoice,
   onClose,
 }: {
   available: boolean;
   selectedVoiceId: string | null;
-  expressive: boolean;
-  onExpressiveChange: (expressive: boolean) => void;
+  mode: VoiceMode;
+  onModeChange: (mode: VoiceMode) => void;
   onSelectVoice: (voiceId: string | null) => void;
   onClose: () => void;
 }) {
@@ -90,7 +111,8 @@ export function VoiceStudio({
   const [recordings, setRecordings] = useState<Record<string, Recording>>({});
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [level, setLevel] = useState(0);
+  /** Set once, a few seconds in, if the microphone is hearing nothing. */
+  const [silent, setSilent] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cloning, setCloning] = useState(false);
@@ -100,6 +122,15 @@ export function VoiceStudio({
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
+  /**
+   * The meter is written straight to the DOM.
+   *
+   * It used to be React state set on every animation frame, which re-rendered
+   * this whole panel sixty times a second while recording - the bar stuttered
+   * and the Stop button lagged behind the tap. Nothing else on screen depends
+   * on the level, so nothing else needs to know it changed.
+   */
+  const meterRef = useRef<HTMLDivElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const elapsedRef = useRef(0);
   const recordingsRef = useRef(recordings);
@@ -122,7 +153,7 @@ export function VoiceStudio({
     audioCtxRef.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
-    setLevel(0);
+    if (meterRef.current) meterRef.current.style.width = "0%";
   }, []);
 
   const stopPreview = useCallback(() => {
@@ -162,7 +193,7 @@ export function VoiceStudio({
     try {
       const body: SpeakRequest = {
         voiceId,
-        mode: expressive ? "expressive" : "faithful",
+        mode,
         pages: [{ page: 0, text: PREVIEW_TEXT, mood: "calm" }],
       };
 
@@ -207,15 +238,48 @@ export function VoiceStudio({
       audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
+      analyser.fftSize = 1024;
+      // Some smoothing in the analyser itself, so the numbers arrive calm.
+      analyser.smoothingTimeConstant = 0.5;
       source.connect(analyser);
-      const buffer = new Uint8Array(analyser.frequencyBinCount);
+
+      const samples = new Uint8Array(analyser.fftSize);
+      let shown = 0;
+      let loudestSoFar = 0;
+      /** Latched, so the check does not set state on every single frame. */
+      let verdict: boolean | null = null;
+      // The audio context's own clock, rather than a wall clock: it is exact,
+      // it is already here, and it is a property read rather than a call.
+      const startedAt = ctx.currentTime;
 
       const tick = () => {
-        analyser.getByteTimeDomainData(buffer);
-        let peak = 0;
-        for (const sample of buffer) peak = Math.max(peak, Math.abs(sample - 128));
-        setLevel(Math.min(1, peak / 90));
+        analyser.getByteTimeDomainData(samples);
+
+        // RMS rather than peak: peak jumps on every consonant and reads as a
+        // broken bar, where RMS tracks how loud the room actually is.
+        let sum = 0;
+        for (const sample of samples) {
+          const centred = (sample - 128) / 128;
+          sum += centred * centred;
+        }
+        const rms = Math.sqrt(sum / samples.length);
+        const level = Math.min(1, rms * 4.5);
+        loudestSoFar = Math.max(loudestSoFar, level);
+
+        // Fast to rise, slow to fall - how a real meter behaves, and what stops
+        // it flickering between syllables.
+        shown = level > shown ? level : shown + (level - shown) * 0.12;
+
+        if (meterRef.current) {
+          meterRef.current.style.width = `${Math.max(2, shown * 100)}%`;
+        }
+
+        // Three seconds of near-silence means the wrong input, or a muted one.
+        if (verdict === null && ctx.currentTime - startedAt > 3) {
+          verdict = loudestSoFar < 0.04;
+          setSilent(verdict);
+        }
+
         rafRef.current = requestAnimationFrame(tick);
       };
       tick();
@@ -243,7 +307,10 @@ export function VoiceStudio({
         teardownMic();
       };
 
-      recorder.start();
+      // A timeslice flushes a chunk a second rather than holding a whole
+      // ninety-second passage in one buffer, which is kinder to a phone.
+      recorder.start(1000);
+      setSilent(false);
       setRecordingId(passageId);
       elapsedRef.current = 0;
       setElapsed(0);
@@ -287,10 +354,16 @@ export function VoiceStudio({
       }
 
       const res = await fetch("/api/voice/clone", { method: "POST", body: form });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}) as Record<string, string>);
 
       if (!res.ok) {
-        setError(data.hint ? `${data.error} ${data.hint}` : data.error);
+        setError(
+          data.error
+            ? data.hint
+              ? `${data.error} ${data.hint}`
+              : data.error
+            : "The voice service turned that down without saying why.",
+        );
         setStatus(null);
         return;
       }
@@ -438,24 +511,39 @@ export function VoiceStudio({
               className="mt-4 rounded-2xl p-4"
               style={{ background: "var(--card)", border: "1px solid var(--border)" }}
             >
-              <label className="flex cursor-pointer items-start gap-3">
-                <input
-                  type="checkbox"
-                  checked={expressive}
-                  onChange={(e) => onExpressiveChange(e.target.checked)}
-                  className="mt-1 h-5 w-5 shrink-0 accent-[var(--accent)]"
-                />
-                <span className="text-sm">
-                  <strong>Read more expressively</strong>
-                  <span className="ink-soft block text-xs">
-                    Uses a livelier voice model that acts the story out rather
-                    than reading it. Some voices carry it beautifully; others
-                    come back sounding processed and less like you. Off is the
-                    closest to your own recording. Change it, then use{" "}
-                    <strong>Hear it</strong> above to compare.
-                  </span>
-                </span>
-              </label>
+              <h3 className="text-sm font-bold uppercase tracking-wider">
+                How it reads
+              </h3>
+              <p className="ink-soft mt-1 text-xs">
+                Change this, then press <strong>Hear it</strong> above. Judging it
+                by ear takes ten seconds and beats any description.
+              </p>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                {VOICE_MODES.map((option) => {
+                  const on = option.id === mode;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => onModeChange(option.id)}
+                      aria-pressed={on}
+                      className="rounded-2xl px-2 py-2.5 text-xs font-bold transition active:scale-[0.98]"
+                      style={{
+                        background: on ? "var(--accent)" : "var(--card-strong)",
+                        color: on ? "var(--accent-ink)" : "var(--ink)",
+                        border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="ink-soft mt-2 text-xs">
+                {VOICE_MODES.find((option) => option.id === mode)?.blurb}
+              </p>
             </div>
           )}
 
@@ -528,17 +616,24 @@ export function VoiceStudio({
                     <p className="story-text mt-3 text-[15px]">{passage.text}</p>
 
                     {isRecording && (
-                      <div
-                        className="mt-3 h-1.5 overflow-hidden rounded-full"
-                        style={{ background: "var(--card-strong)" }}
-                      >
+                      <div className="mt-3">
                         <div
-                          className="h-full rounded-full transition-[width] duration-75"
-                          style={{
-                            width: `${Math.max(3, level * 100)}%`,
-                            background: "var(--accent)",
-                          }}
-                        />
+                          className="h-2 overflow-hidden rounded-full"
+                          style={{ background: "var(--card-strong)" }}
+                        >
+                          {/* Width is written by the animation frame loop, not
+                              by React - see meterRef. */}
+                          <div
+                            ref={meterRef}
+                            className="h-full rounded-full"
+                            style={{ width: "2%", background: "var(--accent)" }}
+                          />
+                        </div>
+                        <p className="mt-2 text-xs" style={{ color: silent ? "#ffb4b4" : "var(--ink-soft)" }}>
+                          {silent
+                            ? "We cannot hear anything. Check the microphone your browser is using, then record again."
+                            : "Recording. Speak at a normal volume, about a hand's width from the microphone."}
+                        </p>
                       </div>
                     )}
 

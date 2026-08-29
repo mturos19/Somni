@@ -4,6 +4,10 @@ import type { CSSProperties } from "react";
  * Themes are pure presentation: a set of CSS custom properties applied to a
  * wrapper element. Adding a theme here makes it available everywhere else with
  * no other change.
+ *
+ * Kept to four on purpose. The picker lays them out as a fixed grid, so a fifth
+ * would either shrink the tiles or bring back the sideways scroll that made the
+ * section feel like an afterthought.
  */
 
 export type Theme = {
@@ -105,31 +109,11 @@ export const THEMES: Theme[] = [
       "--star": "#d9ffe9",
     },
   },
-  {
-    id: "ember",
-    name: "Ember",
-    blurb: "Sunset orange, coral and dusk",
-    emoji: "\u{1F525}",
-    swatch: ["#ff9d6e", "#ffc09a", "#ffd9c2"],
-    vars: {
-      "--sky-1": "#210a10",
-      "--sky-2": "#5a1c22",
-      "--sky-3": "#93402f",
-      "--accent": "#ff9d6e",
-      "--accent-2": "#ffd08a",
-      "--accent-ink": "#2c0c10",
-      "--card": "rgba(255, 226, 210, 0.10)",
-      "--card-strong": "rgba(255, 226, 210, 0.17)",
-      "--border": "rgba(255, 190, 160, 0.26)",
-      "--ink": "#fff4ec",
-      "--ink-soft": "rgba(255, 244, 236, 0.68)",
-      "--glow": "rgba(255, 157, 110, 0.42)",
-      "--star": "#ffe2cf",
-    },
-  },
 ];
 
-export const DEFAULT_THEME = THEMES[2];
+/** Referenced by id so reordering or retiring a theme cannot silently move it. */
+export const DEFAULT_THEME =
+  THEMES.find((t) => t.id === "moonlit") ?? THEMES[0];
 
 export function themeById(id: string | undefined): Theme {
   return THEMES.find((t) => t.id === id) ?? DEFAULT_THEME;

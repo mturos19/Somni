@@ -149,7 +149,7 @@ which the voice-cloning upload could exceed if you record several long passages.
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | secret | Writes the stories. Required. |
 | `ELEVENLABS_API_KEY` | secret | Voice cloning and narration. Optional. |
-| `ELEVENLABS_TTS_MODEL` | plain var | Pin one voice model, ignoring the app's expressive setting. |
+| `ELEVENLABS_TTS_MODEL` | plain var | Pin one voice model, overriding the app's Steady/Natural/Lively control. |
 | `ELEVENLABS_BASE_URL` | plain var | Regional endpoint, for EU/India/Singapore data residency. |
 
 Plain (non-secret) variables go in `wrangler.jsonc` under a `vars` block:

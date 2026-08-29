@@ -17,27 +17,35 @@ export function elevenLabsBase(): string {
 }
 
 /**
- * Two ways to read a story, and they genuinely trade against each other.
+ * Three ways to read a story, in one dial rather than several.
  *
- * `faithful` is eleven_multilingual_v2: the model that stays closest to the
- * recording a parent actually made. An Instant Voice Clone is two minutes of
- * audio, and v2 renders it more conservatively - less performance, more the
- * person. This is the default, because a child recognising the voice matters
- * more than the voice acting well.
+ * The two things that decide whether a cloned parent sounds like a person are
+ * the model and how much freedom it is given, and they interact - so they are a
+ * single choice here instead of separate settings that can be set against each
+ * other.
  *
- * `expressive` is eleven_v3: markedly more alive, directed page by page with
- * audio tags, and noticeably further from the source recording. Some clones
- * carry it beautifully and some come back sounding processed, which is why this
- * is a choice in the app rather than a decision made here.
+ * - `steady`   eleven_multilingual_v2, held tight. The safest, plainest read.
+ * - `natural`  the same model with room to move. Real intonation without
+ *              drifting away from the recording. The default.
+ * - `lively`   eleven_v3, directed page by page with audio tags. Much more
+ *              alive, and noticeably further from the source recording - some
+ *              clones carry that beautifully and some come back processed.
  *
- * ELEVENLABS_TTS_MODEL overrides both.
+ * Which is why this is a control in the app rather than a decision made here.
+ * ELEVENLABS_TTS_MODEL still overrides the model for all three.
  */
-export type VoiceMode = "faithful" | "expressive";
+export type VoiceMode = "steady" | "natural" | "lively";
+
+export const VOICE_MODES: VoiceMode[] = ["steady", "natural", "lively"];
+
+export function isVoiceMode(value: unknown): value is VoiceMode {
+  return typeof value === "string" && (VOICE_MODES as string[]).includes(value);
+}
 
 export function ttsModel(mode: VoiceMode): string {
   const override = process.env.ELEVENLABS_TTS_MODEL;
   if (override) return override;
-  return mode === "expressive" ? "eleven_v3" : "eleven_multilingual_v2";
+  return mode === "lively" ? "eleven_v3" : "eleven_multilingual_v2";
 }
 
 export const isV3 = (model: string) => model.startsWith("eleven_v3");
@@ -71,36 +79,43 @@ export function tagFor(mood: string, model: string): string {
 
 /** Pace, by mood. Only applied in expressive mode. */
 const MOOD_SPEED: Record<string, number> = {
-  calm: 0.95,
-  playful: 1.0,
-  wonder: 0.95,
-  brave: 1.0,
-  sleepy: 0.9,
+  calm: 0.9,
+  playful: 0.95,
+  wonder: 0.9,
+  brave: 0.95,
+  sleepy: 0.85,
 };
 
 /**
  * Settings for one generation.
  *
- * The faithful numbers are not tuned for expression and should not be: steady,
- * warm, unhurried, and as near the parent's own recording as an instant clone
- * gets. Every one of them - including the flat 0.92 - is deliberate. Varying
- * speed by mood here is what starts to sound edited rather than read.
+ * Stability is the lever that decides whether a clone sounds like a person or a
+ * public address system. High values hold the voice steady and flatten it into
+ * a monotone; low values let it move, at the risk of wandering. The three modes
+ * are really three points on that line.
+ *
+ * Speed is baked in below conversational pace because reading to a sleepy child
+ * is slower than talking. The reader can slow it further at playback time, which
+ * costs nothing and needs no regeneration.
  */
-export function voiceSettingsFor(moods: string[], model: string) {
+export function voiceSettingsFor(mode: VoiceMode, moods: string[], model: string) {
   if (!isV3(model)) {
+    const stability = mode === "steady" ? 0.6 : 0.4;
     return {
-      stability: 0.55,
-      similarity_boost: 0.8,
-      style: 0.1,
-      speed: 0.92,
+      stability,
+      similarity_boost: 0.75,
+      // A little style keeps the delivery habits from the parent's own
+      // recording instead of averaging them away.
+      style: mode === "steady" ? 0.05 : 0.2,
+      speed: 0.88,
       use_speaker_boost: true,
     };
   }
 
-  const speeds = moods.map((mood) => MOOD_SPEED[mood] ?? 0.95);
+  const speeds = moods.map((mood) => MOOD_SPEED[mood] ?? 0.9);
   const speed = speeds.length
     ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length
-    : 0.95;
+    : 0.9;
 
   return {
     // v3's "Natural" - the setting that stays closest to the source recording.
@@ -216,22 +231,30 @@ export type Alignment = {
 
 export type SpokenPiece = {
   page: number;
-  text: string;
-  /** Index in the assembled speech where this page's displayed text begins. */
+  /** What the page shows. Word timings are reported against this. */
+  display: string;
+  /** What the voice is given - the same words, the name possibly respelled. */
+  spoken: string;
+  /** Where `spoken` begins in the assembled speech. */
   offset: number;
 };
 
 /**
  * Turns the API's per-character alignment into per-word timings, relative to
- * each page's own text.
+ * each page's own displayed text.
  *
  * The alignment covers everything we sent, mood tags included, which is exactly
- * why each piece carries the offset of its *displayed* text: slicing at that
- * offset drops the tags from the timings without any string matching.
+ * why each piece carries the offset of its spoken text: slicing at that offset
+ * drops the tags from the timings without any string matching.
  *
- * Returns null when the alignment cannot be trusted - lengths that disagree, or
- * characters that are not the ones we sent - so the caller can fall back rather
- * than highlight the wrong word.
+ * Display and spoken text can differ by a respelled name, so timings are
+ * matched by word position rather than by character offset. The substitution
+ * that produces the spoken text is built to preserve word count for precisely
+ * this reason; if it ever failed to, the page keeps its start and end and loses
+ * only the word highlighting, rather than lighting up the wrong word.
+ *
+ * Returns null when the alignment cannot be trusted at all - lengths that
+ * disagree, or characters that are not the ones we sent.
  */
 export function timingsFromAlignment(
   speech: string,
@@ -248,20 +271,33 @@ export function timingsFromAlignment(
   if (characters.join("") !== speech) return null;
 
   const pages: PageTiming[] = pieces.map((piece) => {
-    const words: WordTiming[] = [];
+    const spoken = tokenize(piece.spoken);
+    const shown = tokenize(piece.display);
 
-    for (const token of tokenize(piece.text)) {
+    const timeOf = (index: number) => {
+      const token = spoken[index];
       const first = piece.offset + token.from;
       const last = piece.offset + token.to - 1;
       const start = starts[first] ?? 0;
-      const end = Math.max(ends[last] ?? start, start);
-      words.push({ from: token.from, to: token.to, start, end });
-    }
+      return { start, end: Math.max(ends[last] ?? start, start) };
+    };
+
+    const first = spoken.length > 0 ? timeOf(0) : null;
+    const last = spoken.length > 0 ? timeOf(spoken.length - 1) : null;
+
+    const words: WordTiming[] =
+      spoken.length === shown.length
+        ? shown.map((token, index) => ({
+            from: token.from,
+            to: token.to,
+            ...timeOf(index),
+          }))
+        : [];
 
     return {
       page: piece.page,
-      start: words[0]?.start ?? starts[piece.offset] ?? 0,
-      end: words[words.length - 1]?.end ?? ends[piece.offset] ?? 0,
+      start: first?.start ?? starts[piece.offset] ?? 0,
+      end: last?.end ?? ends[piece.offset] ?? 0,
       words,
     };
   });

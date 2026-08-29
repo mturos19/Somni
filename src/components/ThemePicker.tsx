@@ -23,7 +23,8 @@ export function ThemePicker({
         Let them choose. It changes the whole app.
       </p>
 
-      <div className="no-scrollbar -mx-1 mt-5 flex gap-3 overflow-x-auto px-1 pb-1">
+      {/* A grid, not a scroller: four themes all visible at once. */}
+      <div className="mt-5 grid grid-cols-2 gap-3">
         {THEMES.map((theme) => {
           const selected = theme.id === themeId;
           return (
@@ -32,12 +33,11 @@ export function ThemePicker({
               type="button"
               onClick={() => onChange(theme.id)}
               aria-pressed={selected}
-              className={`group flex min-w-[128px] flex-1 flex-col items-center gap-2 rounded-2xl p-3 transition ${
-                selected ? "scale-[1.02]" : "hover:scale-[1.01]"
-              }`}
+              className="flex flex-col items-center gap-2 rounded-2xl p-3 transition active:scale-[0.98]"
               style={{
                 background: selected ? "var(--card-strong)" : "transparent",
                 border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+                boxShadow: selected ? "0 0 0 3px var(--glow)" : undefined,
               }}
             >
               <span

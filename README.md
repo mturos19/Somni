@@ -43,7 +43,20 @@ place: [`src/lib/age.ts`](src/lib/age.ts).
 with adaptive thinking and a Zod-typed structured output, so the response comes
 back as validated pages rather than prose to be parsed. Server-side fallbacks
 are enabled, so a declined request routes to another model instead of
-dead-ending.
+dead-ending. An output that will not read back as a story is retried once,
+automatically - it is a bad roll rather than a broken request, and a parent
+should never see the JSON complaint underneath.
+
+`effort` is set to `medium`, which was measured rather than assumed. Against
+`high` on identical briefs: 23 s and 1.2k output tokens at age four versus 51 s
+and 3.3k; 101 s versus 178 s at age seven. Every run of both stayed inside the
+age spec for page count and words per page. `high` spent three to four times the
+tokens deliberating and bought nothing measurable while a child sat waiting -
+the craft here comes from the system prompt, not the effort dial.
+
+The schema carries nothing that is not displayed, for the same reason. Output
+tokens are the whole of the wait, so a field nobody reads is latency charged to
+the parent for free.
 
 The route answers with an event stream rather than one late JSON blob. A good
 story is a couple of minutes of real thinking, and a still screen for two
@@ -74,19 +87,25 @@ route so a flat take is caught there rather than at bedtime.
 The recordings go to ElevenLabs Instant Voice Cloning (`POST /v1/voices/add`)
 and the returned voice id is stored locally.
 
-Narration defaults to **eleven_multilingual_v2**, and that default is a
-deliberate retreat. Eleven v3 is a much livelier model, but an Instant Voice
-Clone is two minutes of audio, and v3 re-interprets it: some clones carry that
-beautifully, others come back sounding processed and less like the person. A
-child recognising the voice matters more than the voice acting well, so the
-faithful model is what you get unless you ask otherwise.
+Narration is one control with three settings, in the voice studio:
 
-**Read more expressively** in the voice studio switches to v3, and the studio's
-**Hear it** button reads the same sample line under whichever setting is on, so
-the two can be compared directly rather than argued about. Cached narration is
-keyed by mode, so flipping the setting really does re-read the story.
+| | Model | What it is for |
+| --- | --- | --- |
+| **Steady** | multilingual v2, stability 0.6 | The plainest read. Safest, flattest. |
+| **Natural** | multilingual v2, stability 0.4 | Real intonation, still unmistakably the person. The default. |
+| **Lively** | Eleven v3, directed with audio tags | Acts the story out. Livelier, and further from the recording. |
 
-Two things follow from v3 when it is switched on:
+They are one dial rather than several settings because model and stability
+interact, and separate knobs can be set against each other. Stability is the
+lever that matters: high holds the voice steady and flattens it into a monotone,
+low lets it move at the risk of wandering.
+
+The point of the dial is that this is not a judgement anyone can make from a
+description. **Hear it** in the studio reads a sample line under the current
+setting, so comparing all three takes half a minute. An Instant Voice Clone is
+two minutes of audio, and how well it survives each mode varies by voice.
+
+Two things follow from v3 when **Lively** is on:
 
 - **v3 takes direction through audio tags.** Every page already carries a mood
   from the story model, and [`src/lib/elevenlabs.ts`](src/lib/elevenlabs.ts)
@@ -94,7 +113,7 @@ Two things follow from v3 when it is switched on:
   `[softly]` - plus a small change of pace. The tags are direction, not speech:
   measured against the API's own alignment, `[in awe]` occupies 0.13 s of
   silence rather than the ~0.6 s it would take to say. Tags come from a closed
-  set chosen server-side, never from free text. The v2 models get neither tags
+  set chosen server-side, never from free text. The v2 modes get neither tags
   nor mood pacing, both of which read as edited rather than read.
 - **v3 rejects `previous_text` / `next_text`** with a 400. So on v3 continuity
   across a page turn cannot come from request stitching.
@@ -103,8 +122,13 @@ Which is why narration is generated in *segments* of whole pages, planned by
 [`src/lib/narration.ts`](src/lib/narration.ts) - the first one short so the
 first words arrive quickly, later ones longer since they are fetched while the
 previous is still playing. One generation per segment means a sentence's energy
-carries over the page break instead of resetting, on either model. On the v2
-models the neighbouring pages are also passed as stitching context.
+carries over the page break instead of resetting, in every mode. On the v2 modes
+the neighbouring pages are also passed as stitching context.
+
+Pace is set twice, on purpose. Generation runs at 0.88 because reading to a
+sleepy child is slower than talking, and the reader's **Speed** control changes
+`playbackRate` on top of that - instant, free, needing no regeneration, and
+pitch-preserved so slower still sounds like the same person.
 
 ### Following the words
 
@@ -137,6 +161,21 @@ hard to read in a dark room and reads as a game rather than a book - and
 With no ElevenLabs key the device voice takes over, and where the browser fires
 `onboundary` events it gets the same word-by-word highlighting.
 
+### Saying the name right
+
+A speech model reads an unfamiliar name phonetically and gets it wrong, and a
+story that mispronounces the child it was written for is worse than one that
+never used their name. So a parent can write how it actually sounds - `Sur sha`
+for Saoirse - and that spelling is what reaches the voice while the page still
+shows the real one.
+
+The catch is that word timings are matched to the displayed text by position, so
+the substitution must not change the word count. `normaliseSaysLike` in
+[`src/lib/narration.ts`](src/lib/narration.ts) collapses whitespace to hyphens
+for exactly that reason, the match is whole-word so `Amara` never fires inside
+`Amaranth`, and possessives survive. If the counts ever did diverge, the page
+keeps its start and end and quietly loses only the highlighting.
+
 Each segment - audio and timings together - is cached in IndexedDB keyed by
 voice, so re-reads are free and work offline.
 
@@ -159,9 +198,10 @@ src/
   components/
     AgeDial             the 2-7 dial and what it implies
     ElementPicker       characters, worlds, mash-ups, free text
-    ThemePicker         five palettes, applied live
+    ThemePicker         four palettes, applied live
     VoiceStudio         recording, consent, cloning
     StoryReader         the reader, lighting each word as it is spoken
+                        and remembering where it stopped
   lib/
     age.ts              the age engine
     story.ts            schema, system prompt, prompt builder
@@ -179,11 +219,11 @@ src/
 Roughly, per story: a few cents for the text. Narration runs about $0.10 per
 1,000 characters on multilingual v2 and on v3 alike, so a 700-word story is
 around 40 cents the first time and free on every replay, since audio is cached
-locally. Switching the expressive setting re-reads the story once, because the
-cache is keyed by mode.
+locally. Changing how it reads re-generates a story once, because the cache is
+keyed by mode; changing the speed does not, because that happens at playback.
 
 To cut narration cost roughly in half at some real expense to warmth, set
-`ELEVENLABS_TTS_MODEL=eleven_flash_v2_5`, which overrides the setting entirely.
+`ELEVENLABS_TTS_MODEL=eleven_flash_v2_5`, which overrides all three modes.
 Word timings work the same on every model.
 
 ## Deploying

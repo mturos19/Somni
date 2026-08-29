@@ -14,7 +14,12 @@ function seeded(seed: number) {
   };
 }
 
-export function StarField({ count = 70, seed = 7 }: { count?: number; seed?: number }) {
+/**
+ * Every star is an independently animated element behind the whole app, so the
+ * count is a direct trade against how smooth everything in front of it feels on
+ * a phone. Forty-four reads as a sky; seventy read as a warm battery.
+ */
+export function StarField({ count = 44, seed = 7 }: { count?: number; seed?: number }) {
   const stars = useMemo(() => {
     const rand = seeded(seed);
     return Array.from({ length: count }, (_, i) => ({
@@ -44,10 +49,15 @@ export function StarField({ count = 70, seed = 7 }: { count?: number; seed?: num
           }}
         />
       ))}
-      {/* A soft moon-glow anchoring the top corner. */}
+      {/* A soft moon-glow anchoring the top corner. Promoted to its own layer
+          so drifting it never repaints the blur underneath. */}
       <div
         className="animate-drift absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl"
-        style={{ background: "var(--glow)", opacity: 0.5 }}
+        style={{
+          background: "var(--glow)",
+          opacity: 0.5,
+          willChange: "transform",
+        }}
       />
     </div>
   );

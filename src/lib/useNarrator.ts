@@ -8,6 +8,7 @@ import {
   pageIndexAt,
   planSegments,
   segmentOfPage,
+  spokenText,
   tokenize,
   wordAt,
   type PageTiming,
@@ -22,8 +23,18 @@ type Options = {
   pages: StoryPage[];
   /** ElevenLabs voice id, or null to use the browser's built-in speech. */
   voiceId: string | null;
-  /** Read with Eleven v3 rather than the model that stays closest to the clone. */
-  expressive: boolean;
+  /** How narration is read. See VoiceMode in elevenlabs.ts. */
+  mode: "steady" | "natural" | "lively";
+  /** The child's name, and how it should be said if the spelling misleads. */
+  childName: string;
+  saysLike: string;
+  /**
+   * Playback rate, 1 being the pace it was generated at. Applied to the audio
+   * element rather than baked into the generation, so changing it is instant,
+   * free, and does not invalidate a single cached clip. Browsers preserve pitch,
+   * so slower still sounds like the same person.
+   */
+  rate: number;
   /** Keep reading into the next page when one ends. */
   autoAdvance: boolean;
   /** Called when narration moves to a page, so the book can turn itself. */
@@ -72,7 +83,10 @@ export function useNarrator({
   storyId,
   pages,
   voiceId,
-  expressive,
+  mode,
+  childName,
+  saysLike,
+  rate,
   autoAdvance,
   onPage,
   onFinished,
@@ -110,6 +124,7 @@ export function useNarrator({
   >(async () => {});
   const speakRef = useRef<(index: number, run: number) => void>(() => {});
 
+  const rateRef = useRef(rate);
   const autoRef = useRef(autoAdvance);
   const onPageRef = useRef(onPage);
   const onFinishedRef = useRef(onFinished);
@@ -117,6 +132,12 @@ export function useNarrator({
   useEffect(() => {
     autoRef.current = autoAdvance;
   }, [autoAdvance]);
+
+  // Takes effect on the current page, not just the next one.
+  useEffect(() => {
+    rateRef.current = rate;
+    if (elementRef.current) elementRef.current.playbackRate = rate;
+  }, [rate]);
   useEffect(() => {
     onPageRef.current = onPage;
   }, [onPage]);
@@ -172,8 +193,7 @@ export function useNarrator({
     (index: number): Promise<SavedClip> => {
       if (!voiceId) return Promise.reject(new Error("No voice selected."));
 
-      const mode = expressive ? "expressive" : "faithful";
-      const key = clipKey(storyId, index, voiceId, mode);
+      const key = clipKey(storyId, index, voiceId, `${mode}:${saysLike}`);
       const existing = inflightRef.current.get(key);
       if (existing) return existing;
 
@@ -188,6 +208,8 @@ export function useNarrator({
         const body: SpeakRequest = {
           voiceId,
           mode,
+          childName,
+          saysLike,
           pages: plan.pages.map((p) => ({
             page: p,
             text: pages[p].text,
@@ -218,7 +240,7 @@ export function useNarrator({
       void work.catch(() => {}).finally(() => inflightRef.current.delete(key));
       return work;
     },
-    [expressive, pages, segments, storyId, voiceId],
+    [childName, mode, pages, saysLike, segments, storyId, voiceId],
   );
 
   const prefetch = useCallback(
@@ -293,6 +315,10 @@ export function useNarrator({
       const url = URL.createObjectURL(clip.audio);
       const el = new Audio();
       el.preload = "auto";
+      // Keep the voice's pitch when slowed down; Safari needs the prefix.
+      el.preservesPitch = true;
+      (el as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+      el.playbackRate = rateRef.current;
       el.src = url;
 
       await new Promise<void>((resolve, reject) => {
@@ -390,8 +416,12 @@ export function useNarrator({
       const text = pages[index].text;
       const tokens = tokenize(text);
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 0.9;
+      // Word count is preserved by the respelling, so boundary events still
+      // map onto the tokens of the text actually on screen.
+      const utterance = new SpeechSynthesisUtterance(
+        spokenText(text, childName, saysLike),
+      );
+      utterance.rate = Math.max(0.1, 0.9 * rateRef.current);
       utterance.pitch = 1.05;
 
       const preferred = speechSynthesis
@@ -433,7 +463,7 @@ export function useNarrator({
       showPage(index);
       speechSynthesis.speak(utterance);
     },
-    [pages, showPage],
+    [childName, pages, saysLike, showPage],
   );
 
   useEffect(() => {
@@ -527,7 +557,7 @@ export function useNarrator({
   }, [follow]);
 
   // Tear everything down if the story or the voice changes, or on unmount.
-  useEffect(() => stop, [stop, storyId, voiceId, expressive]);
+  useEffect(() => stop, [stop, storyId, voiceId, mode, saysLike]);
 
   return {
     state,

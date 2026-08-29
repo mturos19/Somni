@@ -1,5 +1,6 @@
 import {
   elevenLabsBase,
+  isVoiceMode,
   ttsModel,
   errorResponse,
   maxCharsFor,
@@ -15,6 +16,7 @@ import {
 import {
   NARRATION_PREFIX_BYTES,
   proportionalTimings,
+  spokenText,
   type SpeakHeader,
   type SpeakRequest,
 } from "@/lib/narration";
@@ -57,7 +59,8 @@ export async function POST(request: Request) {
     const key = requireKey();
 
     const body = (await request.json()) as Partial<SpeakRequest>;
-    const model = ttsModel(body.mode === "expressive" ? "expressive" : "faithful");
+    const mode = isVoiceMode(body.mode) ? body.mode : "natural";
+    const model = ttsModel(mode);
     const voiceId = body.voiceId?.trim();
     const pages = Array.isArray(body.pages) ? body.pages : [];
 
@@ -74,19 +77,27 @@ export async function POST(request: Request) {
     const moods: string[] = [];
     let speech = "";
 
+    const childName = typeof body.childName === "string" ? body.childName : "";
+    const saysLike = typeof body.saysLike === "string" ? body.saysLike : "";
+
     for (const page of pages) {
-      const text = typeof page?.text === "string" ? page.text.trim() : "";
-      if (!text) continue;
+      const display = typeof page?.text === "string" ? page.text.trim() : "";
+      if (!display) continue;
 
       const mood = MOODS.has(page.mood) ? page.mood : "calm";
       moods.push(mood);
 
+      // A blank line between pages, which every model reads as a paragraph
+      // break - a real breath at the page turn rather than a hard cut.
       if (speech) speech += "\n\n";
       const tag = tagFor(mood, model);
       if (tag) speech += `${tag} `;
 
-      pieces.push({ page: page.page, text, offset: speech.length });
-      speech += text;
+      // The page shows the name as it is written; the voice is given it as it
+      // is said. Same words either way, so the timings still line up.
+      const spoken = spokenText(display, childName, saysLike);
+      pieces.push({ page: page.page, display, spoken, offset: speech.length });
+      speech += spoken;
     }
 
     if (pieces.length === 0) {
@@ -107,7 +118,7 @@ export async function POST(request: Request) {
     const payload: Record<string, unknown> = {
       text: speech,
       model_id: model,
-      voice_settings: voiceSettingsFor(moods, model),
+      voice_settings: voiceSettingsFor(mode, moods, model),
       apply_text_normalization: "on",
     };
 
@@ -143,7 +154,10 @@ export async function POST(request: Request) {
       : {
           duration: estimated,
           precise: false,
-          pages: proportionalTimings(pieces, estimated),
+          pages: proportionalTimings(
+            pieces.map((piece) => ({ page: piece.page, text: piece.display })),
+            estimated,
+          ),
         };
 
     return new Response(frame(header, Buffer.from(data.audio_base64, "base64")), {

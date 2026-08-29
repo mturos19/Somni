@@ -29,18 +29,22 @@ export function ElementPicker({
   onCustomChange: (value: string) => void;
   onSurprise: () => void;
 }) {
-  function toggle(groupId: GroupId, optionId: string, softMax: number) {
+  function toggle(groupId: GroupId, optionId: string, max: number) {
     const current = selection[groupId];
     const has = current.includes(optionId);
 
     let next: string[];
     if (has) {
       next = current.filter((id) => id !== optionId);
-    } else if (softMax === 1) {
+    } else if (max === 1) {
+      // A single-choice group swaps rather than blocking - there is nothing to
+      // deselect first when only one can ever be on.
       next = [optionId];
+    } else if (current.length >= max) {
+      // Full. The chip is disabled in the UI, so this is only a guard.
+      return;
     } else {
-      // Oldest choice drops off once the group is full, so tapping always works.
-      next = [...current, optionId].slice(-softMax);
+      next = [...current, optionId];
     }
 
     onChange({ ...selection, [groupId]: next });
@@ -68,42 +72,63 @@ export function ElementPicker({
       </div>
 
       <div className="mt-6 space-y-6">
-        {ELEMENT_GROUPS.map((group) => (
-          <div key={group.id}>
-            <div className="flex items-baseline gap-3">
-              <h3 className="text-sm font-bold uppercase tracking-wider">
-                {group.title}
-              </h3>
-              <span className="ink-soft text-xs">{group.hint}</span>
-            </div>
+        {ELEMENT_GROUPS.map((group) => {
+          const chosen = selection[group.id];
+          // Single-choice groups swap on tap, so nothing is ever unavailable.
+          const full = group.max > 1 && chosen.length >= group.max;
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {group.options.map((option) => {
-                const selected = selection[group.id].includes(option.id);
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => toggle(group.id, option.id, group.softMax)}
-                    aria-pressed={selected}
-                    className="rounded-full px-3.5 py-2 text-sm transition active:scale-95"
-                    style={{
-                      background: selected ? "var(--accent)" : "var(--card-strong)",
-                      color: selected ? "var(--accent-ink)" : "var(--ink)",
-                      border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
-                      fontWeight: selected ? 700 : 500,
-                    }}
+          return (
+            <div key={group.id}>
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="text-sm font-bold uppercase tracking-wider">
+                  {group.title}
+                </h3>
+                <span className="ink-soft text-xs">{group.hint}</span>
+                {group.max > 1 && (
+                  <span
+                    className="ml-auto text-xs tabular-nums"
+                    style={{ color: full ? "var(--accent)" : "var(--ink-soft)" }}
                   >
-                    <span aria-hidden className="mr-1.5">
-                      {option.emoji}
-                    </span>
-                    {option.label}
-                  </button>
-                );
-              })}
+                    {chosen.length}/{group.max}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {group.options.map((option) => {
+                  const selected = chosen.includes(option.id);
+                  // Full means the rest go quiet rather than disappearing, so
+                  // the shape of the choice on screen never jumps around.
+                  const locked = full && !selected;
+
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={locked}
+                      onClick={() => toggle(group.id, option.id, group.max)}
+                      aria-pressed={selected}
+                      title={locked ? `Deselect one to change this` : undefined}
+                      className="rounded-full px-3.5 py-2 text-sm transition active:scale-95 disabled:cursor-not-allowed"
+                      style={{
+                        background: selected ? "var(--accent)" : "var(--card-strong)",
+                        color: selected ? "var(--accent-ink)" : "var(--ink)",
+                        border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+                        fontWeight: selected ? 700 : 500,
+                        opacity: locked ? 0.3 : 1,
+                      }}
+                    >
+                      <span aria-hidden className="mr-1.5">
+                        {option.emoji}
+                      </span>
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         <div>
           <label

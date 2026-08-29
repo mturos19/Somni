@@ -12,8 +12,8 @@ export type ElementGroup = {
   id: GroupId;
   title: string;
   hint: string;
-  /** How many the UI lets you pick before it starts nudging. */
-  softMax: number;
+  /** Hard cap. Once it is reached the remaining chips are disabled. */
+  max: number;
   options: Element[];
 };
 
@@ -21,8 +21,8 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
   {
     id: "hero",
     title: "Who else is in it?",
-    hint: "Pick one or two. Your child is always the hero.",
-    softMax: 3,
+    hint: "Up to two. Your child is always the hero.",
+    max: 2,
     options: [
       { id: "knight", label: "A brave knight", emoji: "\u{1F6E1}️" },
       { id: "dragon", label: "A very small dragon", emoji: "\u{1F409}" },
@@ -42,7 +42,7 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
     id: "world",
     title: "Where does it happen?",
     hint: "The place the story lives in.",
-    softMax: 2,
+    max: 1,
     options: [
       { id: "castle", label: "A castle in the clouds", emoji: "\u{1F3F0}" },
       { id: "forest", label: "An enchanted forest", emoji: "\u{1F332}" },
@@ -59,8 +59,8 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
   {
     id: "twist",
     title: "...but make it",
-    hint: "The mash-up. This is where it gets fun.",
-    softMax: 2,
+    hint: "Up to two. This is where it gets fun.",
+    max: 2,
     options: [
       { id: "starwars", label: "Star Wars", emoji: "⭐" },
       { id: "space", label: "In space", emoji: "\u{1F680}" },
@@ -80,7 +80,7 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
     id: "vibe",
     title: "How should it feel?",
     hint: "Pick one.",
-    softMax: 1,
+    max: 1,
     options: [
       { id: "cosy", label: "Cosy and warm", emoji: "\u{1F56F}️" },
       { id: "silly", label: "Really silly", emoji: "\u{1F92A}" },

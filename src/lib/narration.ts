@@ -90,6 +90,40 @@ export function segmentOfPage(segments: PlannedSegment[], page: number): number 
   return found === -1 ? 0 : found;
 }
 
+/* ----------------------------- pronunciation ------------------------------ */
+
+/**
+ * How a name should be spelled for the voice, rather than for the page.
+ *
+ * Speech models read unusual names phonetically and get them wrong, and a story
+ * that mispronounces the child it was written for is worse than one that never
+ * used their name. So the parent can write how it sounds - "Sur-sha" for
+ * Saoirse - and that spelling is what goes to the voice while the page still
+ * shows the real one.
+ *
+ * Whitespace is collapsed to hyphens deliberately: the substitution has to
+ * leave the word count untouched, because word timings are matched to the
+ * displayed text by position.
+ */
+export function normaliseSaysLike(value: string): string {
+  return value
+    .trim()
+    .replace(/[^\p{L}\p{N}\s'-]/gu, "")
+    .replace(/\s+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** The text to send to the voice: the same words, one of them respelled. */
+export function spokenText(text: string, name: string, saysLike: string): string {
+  const from = name.trim();
+  const to = normaliseSaysLike(saysLike);
+  if (!from || !to || from.toLowerCase() === to.toLowerCase()) return text;
+
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`\\b${escaped}\\b`, "gi"), to);
+}
+
 /* --------------------------------- timing --------------------------------- */
 
 /** Char offsets are relative to the page text, so they survive re-rendering. */
@@ -104,8 +138,11 @@ export type PageTiming = {
 
 export type SpeakRequest = {
   voiceId: string;
-  /** Which voice model to read with. Defaults to the faithful one. */
-  mode?: "faithful" | "expressive";
+  /** The child's name as written, and how it should actually be said. */
+  childName?: string;
+  saysLike?: string;
+  /** How to read it. Defaults to `natural`. See VoiceMode in elevenlabs.ts. */
+  mode?: "steady" | "natural" | "lively";
   pages: { page: number; text: string; mood: Mood }[];
   /** The pages either side of this segment. Ignored by models that reject stitching. */
   previousText?: string;

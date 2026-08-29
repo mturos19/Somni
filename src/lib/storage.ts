@@ -31,8 +31,12 @@ export type ChildProfile = {
   age: number;
   themeId: string;
   voiceId: string | null;
-  /** Read with Eleven v3 instead of the model that stays closest to the clone. */
-  expressiveVoice?: boolean;
+  /** How narration is read. See VoiceMode in elevenlabs.ts. */
+  voiceMode?: "steady" | "natural" | "lively";
+  /** Playback rate for narration. 1 is the pace it was generated at. */
+  readingSpeed?: number;
+  /** How the child's name should be said, when the spelling does not say it. */
+  saysLike?: string;
   createdAt: number;
 };
 
@@ -45,6 +49,8 @@ export type SavedStory = {
   age: number;
   selection: Record<GroupId, string[]>;
   custom: string;
+  /** Furthest page reached, so a story left half-read can be picked back up. */
+  lastPage?: number;
   createdAt: number;
 };
 
@@ -149,6 +155,22 @@ export const stories = {
   },
   save: (story: SavedStory) =>
     safe(run(STORES.stories, "readwrite", (s) => s.put(story)), undefined),
+  /**
+   * Remembers how far a reading got. Written on each page turn, which is a
+   * handful of small writes per story and worth it: bedtime gets interrupted,
+   * and starting again from the cover every time is its own small defeat.
+   */
+  async saveProgress(id: string, lastPage: number) {
+    const stored = await safe(
+      run<SavedStory | undefined>(STORES.stories, "readonly", (s) => s.get(id)),
+      undefined,
+    );
+    if (!stored || stored.lastPage === lastPage) return;
+    await safe(
+      run(STORES.stories, "readwrite", (s) => s.put({ ...stored, lastPage })),
+      undefined,
+    );
+  },
   async remove(id: string) {
     await safe(run(STORES.stories, "readwrite", (s) => s.delete(id)), undefined);
     await clips.clearStory(id);
@@ -165,16 +187,16 @@ export type SavedClip = {
 };
 
 /**
- * The mode is part of the key: the same page in the same voice is different
- * audio under a different model, and serving the cached one back would make the
- * setting look broken.
+ * The variant is part of the key: the same page in the same voice is different
+ * audio under a different mode or a different name pronunciation, and serving
+ * the cached one back would make the setting look broken.
  */
 export const clipKey = (
   storyId: string,
   segment: number,
   voiceId: string,
-  mode: string,
-) => `${storyId}::${voiceId}::${mode}::${segment}`;
+  variant: string,
+) => `${storyId}::${voiceId}::${variant}::${segment}`;
 
 export const clips = {
   get: (key: string) =>

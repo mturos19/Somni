@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgeDial } from "@/components/AgeDial";
 import { ElementPicker, EMPTY_SELECTION, type Selection } from "@/components/ElementPicker";
 import { StarField } from "@/components/StarField";
@@ -37,6 +37,9 @@ const WRITING_LINES = [
   "Slowing down the last few pages...",
 ];
 
+/** Shown after the rare generation that came back unreadable. */
+const RETRY_LINES = ["That one came out tangled. Starting it again..."];
+
 export default function Home() {
   const [profile, setProfile] = useState<ChildProfile>(() => ({
     id: "primary",
@@ -55,10 +58,15 @@ export default function Home() {
   const [studioOpen, setStudioOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<"thinking" | "writing">("thinking");
-  const [written, setWritten] = useState(0);
+  const [retried, setRetried] = useState(false);
+  /** 0 to 1, and only ever upward - a bar that slips backwards reads as broken. */
+  const [ratio, setRatio] = useState(0);
   const [lineIndex, setLineIndex] = useState(0);
+  const writtenRef = useRef(0);
+  /** When the server told us it was starting over, so the note can fade. */
+  const retriedAtRef = useRef(0);
   /** What a finished story of this size usually weighs, per the server. */
-  const [expected, setExpected] = useState(1);
+  const expectedRef = useRef(1);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
@@ -98,10 +106,31 @@ export default function Home() {
     void profileStore.save(profile);
   }, [profile, hydrated]);
 
-  // Cycle the reassuring messages while Claude works.
+  /**
+   * Drives the whole waiting overlay from one timer.
+   *
+   * The bar takes whichever is further along: the characters actually received,
+   * or a curve that creeps toward ninety percent on its own. Planning the story
+   * produces no output at all for a while, and a bar that sits at zero through
+   * that looks like a bug rather than a model thinking.
+   */
   useEffect(() => {
     if (!busy) return;
-    const id = setInterval(() => setLineIndex((i) => i + 1), 2600);
+
+    const startedAt = Date.now();
+    const id = setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const creep = 0.9 * (1 - Math.exp(-elapsed / 40));
+      const measured = writtenRef.current / expectedRef.current;
+
+      setRatio((current) => Math.min(0.97, Math.max(current, creep, measured)));
+      setLineIndex(Math.floor(elapsed / 2.8));
+
+      // Say what happened, then get out of the way.
+      const since = retriedAtRef.current;
+      setRetried(since !== 0 && Date.now() - since < 7000);
+    }, 200);
+
     return () => clearInterval(id);
   }, [busy]);
 
@@ -116,9 +145,12 @@ export default function Home() {
     setBusy(true);
     setError(null);
     setPhase("thinking");
-    setWritten(0);
-    setExpected(1);
+    setRetried(false);
+    setRatio(0);
+    retriedAtRef.current = 0;
     setLineIndex(0);
+    writtenRef.current = 0;
+    expectedRef.current = 1;
 
     try {
       const story = await writeStory(
@@ -133,9 +165,15 @@ export default function Home() {
           themeName: theme.name,
         },
         (event) => {
-          if (event.type === "start") setExpected(Math.max(1, event.expectedChars));
+          if (event.type === "start") expectedRef.current = Math.max(1, event.expectedChars);
           else if (event.type === "phase") setPhase(event.phase);
-          else if (event.type === "progress") setWritten(event.chars);
+          else if (event.type === "progress") writtenRef.current = event.chars;
+          else if (event.type === "retry") {
+            // The bar keeps whatever ground it has: from here the wait is the
+            // same length again, and rewinding it would read as a failure.
+            writtenRef.current = 0;
+            retriedAtRef.current = Date.now();
+          }
         },
       );
 
@@ -151,9 +189,12 @@ export default function Home() {
         createdAt: Date.now(),
       };
 
+      // Open it first. Saving and re-reading the shelf are housekeeping, and
+      // making a parent wait on two IndexedDB round trips after a minute of
+      // waiting already is the wrong order.
+      setReading(saved);
       await storyStore.save(saved);
       setLibrary(await storyStore.all());
-      setReading(saved);
     } catch (err) {
       if (err instanceof StoryError) setError({ message: err.message, hint: err.hint });
       else {
@@ -180,13 +221,21 @@ export default function Home() {
   if (reading) {
     return (
       <div className="sky min-h-dvh" style={themeStyle(themeById(reading.themeId))}>
-        <StarField seed={11} count={50} />
+        <StarField seed={11} count={36} />
         <StoryReader
           saved={reading}
           voiceId={profile.voiceId}
           voiceName={activeVoiceName}
-          expressive={profile.expressiveVoice ?? false}
-          onExit={() => setReading(null)}
+          mode={profile.voiceMode ?? "natural"}
+          childName={profile.name}
+          saysLike={profile.saysLike ?? ""}
+          rate={profile.readingSpeed ?? 1}
+          onRateChange={(readingSpeed) => updateProfile({ readingSpeed })}
+          onProgress={(page) => void storyStore.saveProgress(reading.id, page)}
+          onExit={async () => {
+            setReading(null);
+            setLibrary(await storyStore.all());
+          }}
         />
       </div>
     );
@@ -257,6 +306,36 @@ export default function Home() {
                 color: "var(--ink)",
               }}
             />
+
+            {/*
+              Only worth asking once there is a name to ask about. A story that
+              mispronounces the child it was written for is worse than one that
+              never used their name at all.
+            */}
+            {profile.name.trim().length > 0 && (
+              <div className="mt-3">
+                <label htmlFor="says-like" className="ink-soft text-xs">
+                  Said differently to how it is spelled? Write how it sounds.
+                </label>
+                <input
+                  id="says-like"
+                  value={profile.saysLike ?? ""}
+                  onChange={(e) => updateProfile({ saysLike: e.target.value })}
+                  maxLength={40}
+                  placeholder={`How to say "${profile.name.trim()}" out loud`}
+                  className="mt-1.5 w-full rounded-2xl px-4 py-2.5 text-sm outline-none placeholder:opacity-40"
+                  style={{
+                    background: "var(--card-strong)",
+                    border: "1px solid var(--border)",
+                    color: "var(--ink)",
+                  }}
+                />
+                <p className="ink-soft mt-1 text-[11px]">
+                  Only the voice sees this. The page still shows{" "}
+                  {profile.name.trim()}.
+                </p>
+              </div>
+            )}
           </section>
 
           <AgeDial age={profile.age} onChange={(age) => updateProfile({ age })} />
@@ -305,7 +384,15 @@ export default function Home() {
                     <div className="truncate text-sm font-semibold">{item.title}</div>
                     <div className="ink-soft text-xs">
                       age {item.age} · {item.story.pages.length} pages ·{" "}
-                      {new Date(item.createdAt).toLocaleDateString()}
+                      {item.lastPage !== undefined &&
+                      item.lastPage > 0 &&
+                      item.lastPage < item.story.pages.length ? (
+                        <span style={{ color: "var(--accent-2)" }}>
+                          stopped at page {item.lastPage + 1}
+                        </span>
+                      ) : (
+                        new Date(item.createdAt).toLocaleDateString()
+                      )}
                     </div>
                   </button>
                   <button
@@ -350,38 +437,39 @@ export default function Home() {
         >
           <div className="animate-breathe text-6xl">{"\u{2728}"}</div>
           <p className="story-text max-w-sm text-center text-xl">
-            {(phase === "thinking" ? THINKING_LINES : WRITING_LINES)[
-              lineIndex % (phase === "thinking" ? THINKING_LINES : WRITING_LINES).length
-            ]}
+            {(() => {
+              const lines = retried
+                ? RETRY_LINES
+                : phase === "thinking"
+                  ? THINKING_LINES
+                  : WRITING_LINES;
+              return lines[lineIndex % lines.length];
+            })()}
           </p>
 
-          {/*
-            While the model is planning there is nothing honest to measure, so
-            the bar shimmers. Once words start arriving it fills for real.
-          */}
-          {phase === "thinking" ? (
+          <div className="w-64 max-w-[80vw]">
             <div
-              className="shimmer h-1 w-48 rounded-full"
-              style={{ background: "var(--card-strong)" }}
-            />
-          ) : (
-            <div
-              className="h-1 w-48 overflow-hidden rounded-full"
+              className="h-2 w-full overflow-hidden rounded-full"
               style={{ background: "var(--card-strong)" }}
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={Math.round(Math.min(0.97, written / expected) * 100)}
+              aria-valuenow={Math.round(ratio * 100)}
+              aria-label="Writing your story"
             >
               <div
-                className="h-full rounded-full transition-[width] duration-500 ease-out"
+                className="h-full rounded-full transition-[width] duration-300 ease-linear"
                 style={{
-                  width: `${Math.min(97, (written / expected) * 100)}%`,
+                  width: `${Math.max(2, ratio * 100)}%`,
                   background: "var(--accent)",
+                  boxShadow: "0 0 12px var(--glow)",
                 }}
               />
             </div>
-          )}
+            <div className="ink-soft mt-2 text-center text-xs tabular-nums">
+              {Math.round(ratio * 100)}%
+            </div>
+          </div>
         </div>
       )}
 
@@ -389,8 +477,8 @@ export default function Home() {
         <VoiceStudio
           available={config.voice}
           selectedVoiceId={profile.voiceId}
-          expressive={profile.expressiveVoice ?? false}
-          onExpressiveChange={(expressiveVoice) => updateProfile({ expressiveVoice })}
+          mode={profile.voiceMode ?? "natural"}
+          onModeChange={(voiceMode) => updateProfile({ voiceMode })}
           onSelectVoice={async (voiceId) => {
             updateProfile({ voiceId });
             setSavedVoices(await voiceStore.all());
