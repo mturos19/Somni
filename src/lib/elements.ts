@@ -41,7 +41,7 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
   {
     id: "world",
     title: "Where does it happen?",
-    hint: "The place the story lives in.",
+    hint: "Pick one. Where the story lives.",
     max: 1,
     options: [
       { id: "castle", label: "A castle in the clouds", emoji: "\u{1F3F0}" },
@@ -79,7 +79,7 @@ export const ELEMENT_GROUPS: ElementGroup[] = [
   {
     id: "vibe",
     title: "How should it feel?",
-    hint: "Pick one.",
+    hint: "Pick one. The feeling it leaves behind.",
     max: 1,
     options: [
       { id: "cosy", label: "Cosy and warm", emoji: "\u{1F56F}️" },

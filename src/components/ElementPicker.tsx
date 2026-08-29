@@ -29,25 +29,26 @@ export function ElementPicker({
   onCustomChange: (value: string) => void;
   onSurprise: () => void;
 }) {
+  /**
+   * One rule for every group, whatever its cap: tapping a chosen chip releases
+   * it, and a full group accepts nothing until one is released.
+   *
+   * The single-choice groups used to quietly swap instead, which meant they
+   * were the only ones that never dimmed - the same screen behaving two ways
+   * for no reason a parent could see.
+   */
   function toggle(groupId: GroupId, optionId: string, max: number) {
     const current = selection[groupId];
-    const has = current.includes(optionId);
 
-    let next: string[];
-    if (has) {
-      next = current.filter((id) => id !== optionId);
-    } else if (max === 1) {
-      // A single-choice group swaps rather than blocking - there is nothing to
-      // deselect first when only one can ever be on.
-      next = [optionId];
-    } else if (current.length >= max) {
-      // Full. The chip is disabled in the UI, so this is only a guard.
+    if (current.includes(optionId)) {
+      onChange({ ...selection, [groupId]: current.filter((id) => id !== optionId) });
       return;
-    } else {
-      next = [...current, optionId];
     }
 
-    onChange({ ...selection, [groupId]: next });
+    // Full. The chip is disabled in the UI, so this is only a guard.
+    if (current.length >= max) return;
+
+    onChange({ ...selection, [groupId]: [...current, optionId] });
   }
 
   return (
@@ -74,8 +75,7 @@ export function ElementPicker({
       <div className="mt-6 space-y-6">
         {ELEMENT_GROUPS.map((group) => {
           const chosen = selection[group.id];
-          // Single-choice groups swap on tap, so nothing is ever unavailable.
-          const full = group.max > 1 && chosen.length >= group.max;
+          const full = chosen.length >= group.max;
 
           return (
             <div key={group.id}>
@@ -83,15 +83,17 @@ export function ElementPicker({
                 <h3 className="text-sm font-bold uppercase tracking-wider">
                   {group.title}
                 </h3>
-                <span className="ink-soft text-xs">{group.hint}</span>
-                {group.max > 1 && (
-                  <span
-                    className="ml-auto text-xs tabular-nums"
-                    style={{ color: full ? "var(--accent)" : "var(--ink-soft)" }}
-                  >
-                    {chosen.length}/{group.max}
-                  </span>
-                )}
+                {/* Once a group is full the hint explains how to get out of
+                    it, which is the only thing left worth saying. */}
+                <span className="ink-soft text-xs">
+                  {full ? "Tap a choice again to change it." : group.hint}
+                </span>
+                <span
+                  className="ml-auto text-xs tabular-nums"
+                  style={{ color: full ? "var(--accent)" : "var(--ink-soft)" }}
+                >
+                  {chosen.length}/{group.max}
+                </span>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -108,7 +110,7 @@ export function ElementPicker({
                       disabled={locked}
                       onClick={() => toggle(group.id, option.id, group.max)}
                       aria-pressed={selected}
-                      title={locked ? `Deselect one to change this` : undefined}
+                      title={locked ? "Tap a choice again to change it" : undefined}
                       className="rounded-full px-3.5 py-2 text-sm transition active:scale-95 disabled:cursor-not-allowed"
                       style={{
                         background: selected ? "var(--accent)" : "var(--card-strong)",
