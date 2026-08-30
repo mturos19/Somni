@@ -102,17 +102,28 @@ export function voiceSettingsFor(mode: VoiceMode, moods: string[], model: string
   if (!isV3(model)) {
     const steady = mode === "steady";
     return {
-      // Lower than it looks like it should be, on purpose. Stability is really
-      // a sameness control: it suppresses variation between generations, and
-      // intonation is variation. 0.3 is about as far down as an instant clone
-      // goes before it starts wandering, and it is the difference between a
-      // voice reading and a voice performing.
-      stability: steady ? 0.5 : 0.3,
+      /**
+       * Expressiveness and coherence are the same dial, and it is short.
+       *
+       * Lower stability means more intonation; it also means, in ElevenLabs'
+       * own words, that the voice "can sound erratic" - which at the bottom of
+       * the range is heard as invented syllables and words that are not on the
+       * page. Their published presets bracket it: narration 0.7, conversational
+       * 0.4, character voices 0.3. This app sat at 0.3 with style 0.35 - the
+       * character-voice corner - and produced exactly the gibberish that corner
+       * is known for.
+       *
+       * So 0.4 for Natural: as much movement as an instant clone reliably
+       * sustains. Real warmth beyond this comes from a better clone - more
+       * audio, cleanly captured - not from a smaller number here. Anything that
+       * still slips through is caught by the overrun check in useNarrator, or
+       * by Read that again in the reader.
+       */
+      stability: steady ? 0.65 : 0.4,
       similarity_boost: 0.75,
-      // Style exaggerates the delivery habits in the source recording rather
-      // than inventing new ones - which only works if the recording kept its
-      // dynamics. See the capture settings in VoiceStudio.
-      style: steady ? 0.1 : 0.35,
+      // Style is documented to reduce stability, and it was the other half of
+      // the gibberish. A little on Natural, none on Steady.
+      style: steady ? 0 : 0.1,
       speed: 0.88,
       use_speaker_boost: true,
     };

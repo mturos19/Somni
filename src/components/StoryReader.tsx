@@ -167,7 +167,7 @@ export function StoryReader({
     onFinished: handleFinished,
   });
 
-  const { play, stop, prefetch, state: narratorState, word, precise } = narrator;
+  const { play, stop, reread, prefetch, state: narratorState, word, precise } = narrator;
 
   // Warm the opening pages while the cover is still on screen, so the first
   // words arrive as soon as the parent taps play.
@@ -425,7 +425,21 @@ export function StoryReader({
             </button>
           </div>
 
-          <div className="flex items-center justify-center text-xs">
+          <div className="flex items-center justify-center gap-4 text-xs">
+            {/* Narration is not deterministic. When a page comes out garbled,
+                asking again almost always fixes it, and a parent should not
+                have to know that to get out of it. */}
+            {slide.kind === "page" && voiceId && (
+              <button
+                type="button"
+                onClick={() => void reread(slide.index)}
+                disabled={isLoadingHere}
+                className="ink-soft rounded-full px-3 py-1.5 disabled:opacity-40"
+                style={{ border: "1px solid var(--border)" }}
+              >
+                Read that again
+              </button>
+            )}
             <span className="ink-soft">
               {isLoadingHere
                 ? "Warming up your voice..."

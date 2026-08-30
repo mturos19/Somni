@@ -81,6 +81,29 @@ function releasePrepared(key: string) {
   URL.revokeObjectURL(ready.url);
 }
 
+/**
+ * How far past the last spoken character a clip may run before we assume the
+ * voice invented something.
+ *
+ * The alignment covers every character we sent, so its final timestamp is where
+ * our text stops. Audio continuing beyond that is audio for words that were
+ * never in the story - the failure heard as a garbled phrase trailing off the
+ * end of a page.
+ *
+ * Measured across every mode and both runtimes, a healthy clip runs 0.05 to
+ * 0.08 seconds past its alignment: mp3 frame padding and a breath of silence.
+ * 1.5 seconds is twenty times that margin, so a false positive is unlikely
+ * enough to be worth the cost of the one it would trigger, while still
+ * catching anything longer than about a word and a half.
+ */
+const OVERRUN_TOLERANCE_SECONDS = 1.5;
+
+/** True when the audio runs on past everything the alignment accounts for. */
+function overran(clip: SavedClip, el: HTMLAudioElement): boolean {
+  if (!clip.precise || !Number.isFinite(el.duration)) return false;
+  return el.duration > clip.duration + OVERRUN_TOLERANCE_SECONDS;
+}
+
 /** An audio element with its metadata already loaded, ready to play at once. */
 async function decodeClip(clip: SavedClip, rate: number): Promise<{ el: HTMLAudioElement; url: string }> {
   const url = URL.createObjectURL(clip.audio);
@@ -248,15 +271,19 @@ export function useNarrator({
    * Staleness is handled by the run counter at the call site instead.
    */
   const fetchClip = useCallback(
-    (index: number): Promise<SavedClip> => {
+    (index: number, fresh = false): Promise<SavedClip> => {
       if (!voiceId) return Promise.reject(new Error("No voice selected."));
 
       const key = clipKey(storyId, index, voiceId, `${mode}:${saysLike}`);
       const existing = inflightRef.current.get(key);
-      if (existing) return existing;
+      if (existing && !fresh) return existing;
 
       const work = (async () => {
-        const cached = await clipStore.get(key);
+        // A fresh request skips the cache on the way in and replaces it on the
+        // way out. Generation is not deterministic, so asking again is asking
+        // for a different take - which is the whole point when the last one
+        // came back garbled.
+        const cached = fresh ? undefined : await clipStore.get(key);
         if (cached) return cached;
 
         const plan = segments[index];
@@ -366,20 +393,36 @@ export function useNarrator({
   );
 
   const playSegment = useCallback(
-    async (index: number, fromPage: number, run: number) => {
+    async (index: number, fromPage: number, run: number, fresh = false) => {
       // Warmed while the previous segment was still playing: nothing to fetch,
       // nothing to decode, so the seam between them is silent.
-      const candidate = prepared.get(readyKey);
+      const candidate = fresh ? undefined : prepared.get(readyKey);
       const warm = candidate?.index === index ? candidate : null;
       if (warm) prepared.delete(readyKey);
+      if (fresh) releasePrepared(readyKey);
 
-      const clip = warm ? warm.clip : await fetchClip(index);
+      let clip = warm ? warm.clip : await fetchClip(index, fresh);
       if (runRef.current !== run) return;
 
-      const decoded = warm ?? (await decodeClip(clip, rateRef.current));
+      let decoded = warm ?? (await decodeClip(clip, rateRef.current));
       if (runRef.current !== run) {
         if (!warm) URL.revokeObjectURL(decoded.url);
         return;
+      }
+
+      // The voice said more than we asked it to. Once, quietly, ask again -
+      // a different take is all it usually needs, and a child hearing a page
+      // of nonsense is worse than a couple of seconds of waiting.
+      if (!fresh && overran(clip, decoded.el)) {
+        console.warn("[narrator] clip overran its alignment; regenerating");
+        URL.revokeObjectURL(decoded.url);
+        clip = await fetchClip(index, true);
+        if (runRef.current !== run) return;
+        decoded = await decodeClip(clip, rateRef.current);
+        if (runRef.current !== run) {
+          URL.revokeObjectURL(decoded.url);
+          return;
+        }
       }
 
       const el = decoded.el;
@@ -458,7 +501,9 @@ export function useNarrator({
             const upcoming = await fetchClip(next);
             if (runRef.current !== run || prepared.has(readyKey)) return;
             const decoded = await decodeClip(upcoming, rateRef.current);
-            if (runRef.current !== run) {
+            if (runRef.current !== run || overran(upcoming, decoded.el)) {
+              // Leave it be. Playing this segment will fetch again and take the
+              // regeneration path, where there is a listener to warn.
               URL.revokeObjectURL(decoded.url);
               return;
             }
@@ -547,7 +592,7 @@ export function useNarrator({
   /* -------------------------------- controls ------------------------------- */
 
   const play = useCallback(
-    async (index: number) => {
+    async (index: number, fresh = false) => {
       if (index < 0 || index >= pages.length) return;
       setError(null);
 
@@ -564,7 +609,9 @@ export function useNarrator({
       const timing = timingRef.current;
 
       // Already holding the right segment: seek rather than fetch it again.
-      if (el && timing && segmentRef.current === wanted) {
+      // Unless this is a deliberate re-read, which exists precisely because the
+      // audio in hand is the problem.
+      if (!fresh && el && timing && segmentRef.current === wanted) {
         const at = timing.findIndex((entry) => entry.page === index);
         if (at !== -1) {
           el.currentTime = timing[at].start;
@@ -585,7 +632,7 @@ export function useNarrator({
       showPage(index);
 
       try {
-        await playSegment(wanted, index, run);
+        await playSegment(wanted, index, run, fresh);
       } catch (err) {
         if (runRef.current !== run) return;
         setState("error");
@@ -602,6 +649,19 @@ export function useNarrator({
       teardown,
       voiceId,
     ],
+  );
+
+  /**
+   * Generates this page again from scratch and plays it.
+   *
+   * Narration is not deterministic, so a page that came back garbled is very
+   * likely fine on a second ask. This is the button for the times the overrun
+   * check did not notice - a mangled word in the middle rather than invented
+   * audio on the end.
+   */
+  const reread = useCallback(
+    (index: number) => play(index, true),
+    [play],
   );
 
   const pause = useCallback(() => {
@@ -644,6 +704,7 @@ export function useNarrator({
     pause,
     resume,
     stop,
+    reread,
     prefetch,
     isBusy: state === "loading" || state === "playing",
   };

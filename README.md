@@ -76,13 +76,31 @@ desert, with original names. Same delight, no one else's characters.
 
 ### The voice
 
-The voice studio records three passages - warm, playful, then slow and sleepy -
-rather than one long read. This is the single biggest lever on how alive the
-finished narration sounds, because a clone copies *performance*, not just
-timbre: read the three flatly and every story afterwards comes back flat, no
-matter what the model is asked to do with it. The on-screen directions say so,
-and a **Hear it** button plays a sample line back through the real narration
-route so a flat take is caught there rather than at bedtime.
+The voice studio records three short passages, all in the same voice, coming to
+about ninety seconds together. Both of those numbers are ElevenLabs' guidance
+rather than taste, and both are counter-intuitive enough to be worth stating:
+
+- **One to two minutes is optimal**, and "avoid recording more than 3 minutes,
+  this will yield little improvement and can, in some cases, even be detrimental
+  to the clone." Instant cloning is the one place where more audio makes things
+  worse, and what it degrades is stability - which is heard as invented words.
+  The studio shows a band to land inside rather than a bar to fill, and says so
+  at both ends. Thirty minutes upward is a different product entirely:
+  Professional Voice Cloning, which trains a model rather than embedding a
+  sample.
+- **"Good consistent input = good consistent output"**, from "a single speaker
+  with steady tone and performance." An earlier version of this app asked for
+  warm, then broadly comic, then a whisper, on the theory that range in gives
+  range out. It does not - instant cloning builds one embedding, and three
+  performances average into a muddier one. The variety now lives in the writing
+  instead: description, a line of dialogue, a question, a soft landing.
+
+A **Hear it** button plays a sample line back through the real narration route,
+so a poor clone is caught there rather than at bedtime.
+
+How the audio is captured matters more than any of it, which is why every
+browser processor is switched off during recording - see `startRecording` in
+[`src/components/VoiceStudio.tsx`](src/components/VoiceStudio.tsx).
 
 The recordings go to ElevenLabs Instant Voice Cloning (`POST /v1/voices/add`)
 and the returned voice id is stored locally.

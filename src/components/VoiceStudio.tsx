@@ -12,58 +12,61 @@ const VOICE_MODES: { id: VoiceMode; label: string; blurb: string }[] = [
   {
     id: "steady",
     label: "Steady",
-    blurb: "Even and predictable. Safest, and the flattest.",
+    blurb: "Even and predictable. Never garbles a word, never surprises you.",
   },
   {
     id: "natural",
     label: "Natural",
-    blurb: "Lets your intonation through, still unmistakably you. Start here.",
+    blurb: "Lets your intonation through. Start here.",
   },
   {
     id: "lively",
     label: "Lively",
-    blurb: "Acts the story out. Livelier, and further from your recording.",
+    blurb: "Acts the story out. Livelier, further from your recording, and the most likely to stumble.",
   },
 ];
 
 /**
- * Three passages rather than one long read. Varied prosody - warm, playful,
- * then slow and sleepy - gives the clone a much better range than a minute of
- * flat reading, and the last one is the register it will spend most of its
- * life in.
+ * Three short passages in one voice, not three performances.
  *
- * This is the single biggest lever on how alive the finished narration sounds.
- * A voice clone copies performance, not just timbre: read these three flatly
- * and every story afterwards will be read back just as flatly, no matter what
- * the model is asked to do with it. The directions say so in as many words.
+ * Both halves of that are ElevenLabs' guidance rather than taste. On total
+ * length: "approximately 1-2 minutes of clear audio" is optimal, and "avoid
+ * recording more than 3 minutes, this will yield little improvement and can,
+ * in some cases, even be detrimental to the clone." Instant cloning is the one
+ * place where more audio makes things worse, and the thing it degrades is
+ * stability - heard as invented words. Thirty minutes upward is a different
+ * product, Professional Voice Cloning, which trains a model instead.
+ *
+ * On consistency: "good consistent input = good consistent output", from "a
+ * single speaker with steady tone and performance". An earlier version of this
+ * file asked for warm, then broadly comic, then a whisper, on the theory that
+ * range in gives range out. It does not: instant cloning builds one embedding,
+ * and three different performances average into a muddier one.
+ *
+ * So every passage below is the same voice - the one that will read the story -
+ * and the variety is in the writing instead. Description, a line of dialogue, a
+ * question, a soft landing. Enough for the model to hear intonation without
+ * hearing three different people.
  */
 const PASSAGES = [
   {
-    id: "warm",
-    title: "Warm and ordinary",
+    id: "opening",
+    title: "The beginning",
     direction:
-      "Out loud, at normal volume, the way you would actually talk to your child. Not a reading voice.",
-    text: `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. Nobody thought anything of it. The postman walked past it twice a day and never once looked up. But on the last Tuesday of every month, if you happened to be looking at exactly the right moment, the gate would swing open all on its own, and something small and quick would slip out into the garden and disappear behind the roses.
-
-Nobody in that house ever mentioned it. Not at breakfast, not at bedtime, not even on the Tuesday itself. The grandmother would simply glance at the window, and then at the clock, and then she would put the kettle on and say, well, there we are. And that, apparently, was that.`,
+      "Read it the way you would to your child, at normal volume. This is the voice you want back.",
+    text: `Once, at the far end of an ordinary street, there was a house with a blue door and a slightly wonky gate. Nobody thought anything of it. The postman walked past it twice a day and never once looked up. But on the last Tuesday of every month, if you happened to be looking at exactly the right moment, the gate would swing open all on its own.`,
   },
   {
-    id: "playful",
-    title: "Bright and playful",
-    direction:
-      "Bigger and sillier. Do the duck. Let your voice jump around - this is the range the clone borrows from, so give it something to borrow.",
-    text: `Well! said the duck, who was not used to being interrupted. That is the third time this morning! She flapped once, twice, and then, because she was a duck of considerable drama, a third time for good measure. Everyone stop where you are! she shouted. Somebody has stolen my extremely important hat, and I intend to find it before lunch!
-
-The frog raised one hand, very slowly. It is on your head, he said. There was a pause. It was a long pause. It was, in fact, the longest pause that pond had ever known. So it is, said the duck. Well. That proves it. Somebody put it there. And off she went, enormously pleased with herself, to tell absolutely everybody.`,
+    id: "middle",
+    title: "The middle",
+    direction: "Same voice. There is a question in here, and someone speaking.",
+    text: `Well, said the duck, who was not used to being interrupted. Is that really where you put it? She thought about this for a while. The frog said nothing at all, which was, on balance, the wisest thing anyone said that morning. And what, said the duck at last, are we supposed to do now?`,
   },
   {
-    id: "sleepy",
-    title: "Slow and sleepy",
-    direction:
-      "The bedtime voice. Quiet, unhurried, almost a whisper. This is the one it will use most, so take your time over it.",
-    text: `The lanterns went out one by one, and the harbour went quiet, and the little boat rocked so gently that you could barely tell it was moving at all. Somewhere far off, a bell rang twice, and then did not ring again. It was very late now. The sea breathed in, and out, and in again, and everybody who was still awake decided, quietly, that they no longer were.
-
-The lamp in the window went out. The cat on the wall folded herself into a smaller and smaller shape until she was mostly just a shadow with opinions. And the tide came up the beach the way it always does, slowly, and without any particular hurry, and took the day away with it.`,
+    id: "ending",
+    title: "The ending",
+    direction: "Same voice again, just slower. Let it settle the way you would at the last page.",
+    text: `The lanterns went out one by one, and the harbour went quiet, and the little boat rocked so gently that you could barely tell it was moving at all. Somewhere far off, a bell rang twice, and then did not ring again. It was very late now. The sea breathed in, and out, and in again.`,
   },
 ] as const;
 
@@ -388,17 +391,23 @@ export function VoiceStudio({
   const totalSeconds = Object.values(recordings).reduce((sum, r) => sum + r.seconds, 0);
 
   /**
-   * How much the clone has to work with. Instant cloning will accept under a
-   * minute and produce something recognisable but lifeless; the difference
-   * between a passable clone and a convincing one is mostly just more audio,
-   * so it is worth saying so while there is still a microphone open.
+   * Where this recording sits against ElevenLabs' own guidance: one to two
+   * minutes is optimal, and past three minutes more audio "can, in some cases,
+   * even be detrimental to the clone". So this is a band to land inside, not a
+   * total to maximise, and it says so at both ends.
    */
   const audioVerdict =
-    totalSeconds >= 150
-      ? { text: "Plenty to work with.", tone: "var(--accent)" }
+    totalSeconds > 180
+      ? {
+          text: "Past the recommended maximum. More audio can make the clone less stable.",
+          tone: "#ffb4b4",
+        }
       : totalSeconds >= 75
-        ? { text: "Enough, but another passage would help.", tone: "var(--accent-2)" }
-        : { text: "Thin. Expect a flat clone below about a minute.", tone: "var(--ink-soft)" };
+        ? { text: "Right in the sweet spot.", tone: "var(--accent)" }
+        : totalSeconds >= 45
+          ? { text: "Workable. One more passage would help.", tone: "var(--accent-2)" }
+          : { text: "Too short so far. Read another passage.", tone: "var(--ink-soft)" };
+
   const canClone = consent && recordedCount > 0 && voiceName.trim().length > 0;
 
   async function createVoice() {
@@ -488,8 +497,14 @@ export function VoiceStudio({
                 Your voice
               </h2>
               <p className="ink-soft mt-1 text-sm">
-                Record three short passages and every story can be read aloud in
+                Read three short passages and every story can be read aloud in
                 your voice, even when you are not there.
+              </p>
+              <p className="ink-soft mt-2 text-xs">
+                Somewhere quiet, no music, phone or laptop about a hand&apos;s
+                width away. How it is recorded matters more than how much there
+                is - a minute and a half of clean audio beats five minutes of
+                echo, and the same voice throughout beats three different ones.
               </p>
             </div>
             <button
@@ -747,22 +762,50 @@ export function VoiceStudio({
               >
                 {cloning ? "Creating your voice..." : "Create my voice"}
               </button>
-              <span className="text-xs">
+              <div className="min-w-[220px] flex-1 text-xs">
                 {recordedCount === 0 ? (
                   <span className="ink-soft">
-                    Record at least one passage. All three gives the best result.
+                    Read all three. Together they come to about a minute and a
+                    half, which is what an instant clone wants.
                   </span>
                 ) : (
                   <>
-                    <span className="ink-soft">
-                      {recordedCount} of 3 · {totalSeconds}s of audio ·{" "}
-                    </span>
-                    <span style={{ color: audioVerdict.tone }}>
-                      {audioVerdict.text}
-                    </span>
+                    {/* A band to land inside rather than a bar to fill: the
+                        shaded stretch is the recommended one to sixty
+                        seconds either side of ideal, and past it the marker
+                        turns. */}
+                    <div
+                      className="relative h-1.5 overflow-hidden rounded-full"
+                      style={{ background: "var(--card)" }}
+                      aria-hidden
+                    >
+                      <div
+                        className="absolute inset-y-0 rounded-full"
+                        style={{
+                          left: `${(60 / 210) * 100}%`,
+                          width: `${(90 / 210) * 100}%`,
+                          background: "var(--card-strong)",
+                        }}
+                      />
+                      <div
+                        className="absolute inset-y-0 w-1 rounded-full transition-[left] duration-300"
+                        style={{
+                          left: `${Math.min(99, (totalSeconds / 210) * 100)}%`,
+                          background: audioVerdict.tone,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1.5">
+                      <span className="ink-soft">
+                        {recordedCount} of 3 · {totalSeconds}s ·{" "}
+                      </span>
+                      <span style={{ color: audioVerdict.tone }}>
+                        {audioVerdict.text}
+                      </span>
+                    </div>
                   </>
                 )}
-              </span>
+              </div>
             </div>
           </fieldset>
 
