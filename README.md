@@ -1,13 +1,190 @@
 # Somni
 
-A bedtime story app. You pick who is in it and where it happens, set your
-child's age, and Claude writes an original story tuned to that age. Then it is
-read aloud in your own cloned voice.
+**A bedtime story app that writes a brand-new story every night and reads it aloud in your
+own voice.** Pick who is in it and where it happens, set your child's age, and Claude writes
+an original story tuned to that age — then it comes back narrated by a clone of you, lighting
+up each word as it is spoken. No account, no database, nothing stored on a server.
 
-Everything a family makes — profiles, stories, and the narrated audio — is
-stored in their own browser. There is no account, no database, and nothing
-leaves the device except the story brief and the voice recordings you
-explicitly submit.
+<p>
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white">
+  <img alt="Tailwind" src="https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white">
+  <img alt="Claude" src="https://img.shields.io/badge/Claude-Opus%205-D97757?logo=anthropic&logoColor=white">
+  <img alt="ElevenLabs" src="https://img.shields.io/badge/ElevenLabs-voice%20cloning-1a1a1a">
+  <img alt="Cloudflare" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
+</p>
+
+![Somni story builder](assets/main_screen.png)
+
+Bedtime is the same four books on rotation until everyone involved can recite them. Somni
+makes a new one in twenty seconds for a four-year-old, a minute or two for a seven-year-old
+who gets a subplot: knights and dragons, but make it space. A mermaid detective. Everyone is
+a cat. The child is always the hero, by name, and the story lands somewhere calm — every
+time, because that part is not left to chance.
+
+---
+
+## The age dial
+
+The dial from 2 to 7 is the whole idea, and it does far more than swap long words for short
+ones. Each notch carries its own specification: how many pages, how many words on a page, the
+longest sentence allowed, the shape of the plot, how much tension is permitted, which
+narrative devices to use, and what to avoid entirely. All of it reaches the model.
+
+| | At two | At seven |
+|---|---|---|
+| **Shape** | six to eight pages, a warm routine with one small surprise | eleven to fourteen pages, a subplot and a real reversal |
+| **Sentences** | eight words at most, subject-verb-object | up to twenty-two, paragraph-level rhythm |
+| **Devices** | a refrain the child can say along, sound words to perform | foreshadowing, dry humour, a morally interesting choice |
+| **Never** | villains, chases, anyone separated from a grown-up | peril to caregivers, preachiness, a rushed ending |
+
+Retuning all of that lives in one file: [`src/lib/age.ts`](src/lib/age.ts).
+
+Underneath it sits a rule the story cannot break, whatever anyone asks for: **it must leave
+the child calmer than it found them.** No cliffhangers, nothing unresolved, and the last two
+pages decelerate — sentences shorten, the world quiets, the hero settles. If a requested
+element cannot be made bedtime-safe, it keeps its flavour and loses its teeth: a fearsome
+monster becomes an enormous, shy one; a battle becomes a contest.
+
+Ask for Star Wars and you get space knights with humming blades and a wise mentor in a
+desert, under original names. Same delight, nobody else's characters.
+
+---
+
+## Screens
+
+### Tonight's story
+
+| Building it | Writing it |
+|---|---|
+| [![Story builder](assets/main_screen.png)](assets/main_screen.png) | [![Writing overlay](assets/writing_screen.png)](assets/writing_screen.png) |
+
+Forty story elements across four groups — who else is in it, where it happens, *but make it*,
+and how it should feel — with hard caps so the story stays focused, and a free-text box the
+prompt treats as the most important instruction of all. Their favourite toy, a worry about
+starting school, a joke only your family gets.
+
+Four themes, applied live to the whole app, because the person choosing is usually four.
+
+### The reader
+
+| The cover | Mid-story |
+|---|---|
+| [![Story cover](assets/reader_cover.png)](assets/reader_cover.png) | [![Reader following the words](assets/reader_screen.png)](assets/reader_screen.png) |
+
+One page at a time, in a serif sized for a dark room. The page turns itself when the voice
+reaches it. Each word lifts and warms as it is spoken — not a karaoke bar, which is hard to
+read in the dark and reads as a game rather than a book.
+
+A story left half-read remembers where it stopped and offers to carry on. Behind **For
+grown-ups** sit the reading speed, the page-turn behaviour, a note on how to perform this
+particular story, and any ambitious words it used with child-friendly meanings ready.
+
+### Your voice
+
+[![Voice studio](assets/voice_screen.png)](assets/voice_screen.png)
+
+Three short passages, about ninety seconds all told, and every story afterwards can be read
+in your voice — on the nights you are not there to read it.
+
+---
+
+## Getting the voice right
+
+This was the hard part, and most of what I assumed turned out to be wrong. The interesting
+failures:
+
+**The browser was flattening the recording before it was ever sent.** `getUserMedia` defaults
+echo cancellation, noise suppression and automatic gain *on*, because it assumes a video call.
+That trio gates quiet passages and compresses loud ones — exactly the dynamic range a clone
+learns delivery from. Every processor is now switched off during recording. This mattered more
+than any parameter.
+
+**More audio makes an instant clone worse, not better.** ElevenLabs are explicit: one to two
+minutes is optimal, and past three "can, in some cases, even be detrimental to the clone."
+What it degrades is stability, which is heard as invented words. Somni asks for ninety seconds
+and shows a band to land inside rather than a bar to fill.
+
+**Range in does not give range out.** Asking for warm, then comic, then a whisper produces a
+muddier clone, not a more versatile one — instant cloning builds a single speaker embedding
+and three performances average into one. All three passages are now the same voice, with the
+variety in the writing instead.
+
+**Expressiveness and coherence are the same dial, and it is short.** ElevenLabs' own presets
+bracket it: narration 0.7 stability, conversational 0.4, character voices 0.3. Pushed to 0.3
+this app produced exactly the gibberish that corner is known for. It sits at 0.4 now, with
+Steady and Lively either side of it and a **Hear it** button to judge by ear in ten seconds.
+
+**Anything that still slips through is caught.** The alignment data covers every character
+sent, so its final timestamp is where the text ends. Audio running past that is audio for
+words that were never in the story — measured, a healthy clip overruns by 0.05–0.08 seconds,
+so 1.5 is a confident signal. That segment regenerates itself before it reaches the child, and
+**Read that again** handles the rest.
+
+And because a speech model reads an unfamiliar name phonetically and gets it wrong, there is a
+**sounds like** field. Write `Sur sha` and the voice says Saoirse properly while the page keeps
+the real spelling.
+
+---
+
+## Nothing leaves your device
+
+There is no account, no database and no server-side storage. Profiles, stories and the
+narrated audio all live in your own browser's IndexedDB. The only things that ever leave are
+the story brief and the voice recordings you deliberately submit.
+
+Narration is cached per voice, which means a second reading of the same story costs nothing
+and works with the aeroplane mode on.
+
+**On consent.** Cloning a voice requires affirming it is your own or that you have the
+speaker's explicit permission, and the API route rejects the request without it — the gate is
+not only in the interface. ElevenLabs independently runs its own verification and may ask you
+to read a phrase to prove the voice is yours, which the app surfaces rather than hides.
+
+---
+
+## Built with
+
+| | Used for |
+|---|---|
+| **TypeScript** · **React 19** · **Next.js 16** (App Router) | ~5,200 lines across 23 files; one page, five API routes |
+| **Tailwind v4** | themes as CSS custom properties, so one variable swap repaints everything |
+| **Claude Opus 5** via `@anthropic-ai/sdk` | story generation with adaptive thinking |
+| **Zod 4** | the story schema, enforced as structured output rather than parsed from prose |
+| **ElevenLabs** | Instant Voice Cloning, and text-to-speech with character alignment |
+| **Web Audio** · **MediaRecorder** | recording, the live level meter, the noise-floor measurement |
+| **IndexedDB** | stories, profiles and cached narration, entirely client-side |
+| **Cloudflare Workers** via OpenNext | deployment — 1.1 MiB gzipped, runs on the free plan |
+
+### Engineering notes
+
+A few things worth a closer look:
+
+- **Structured output, not prose parsing.** The story arrives as a Zod-validated object —
+  pages, moods, a dedication, a goodnight line — so there is no regex anywhere near it. An
+  output that will not read back as a story is retried once, automatically, so a parent never
+  sees the JSON underneath.
+- **`effort` was measured, not assumed.** Against `high` on identical briefs: 23s vs 51s at
+  age four, 101s vs 178s at age seven, with both staying inside the age spec every run.
+  `medium` won on the only axis that differed.
+- **Progress is streamed as server-sent events.** A still screen for a minute reads as broken,
+  so the route reports when the model stops planning and starts writing, and sends a character
+  count the bar can use honestly.
+- **Narration is generated in multi-page segments**, which is what carries a sentence's energy
+  over a page turn instead of resetting at every one — and on Eleven v3 is the only way, since
+  that model rejects request stitching outright.
+- **Word timings come from the API's character alignment**, folded into per-word start and end
+  times expressed as offsets into each page's own text. The reader then follows the audio's own
+  clock on an animation frame, running 80 ms ahead because `currentTime` is the decode position
+  rather than the moment sound leaves the speaker.
+- **The next segment is fetched *and decoded* while the current one plays.** Having the bytes
+  was never enough; building the element and waiting on its metadata is itself a few hundred
+  milliseconds of hole at every seam.
+- **Audio is sent as bytes, not base64 in JSON** — a length-prefixed header followed by the raw
+  mp3. A third less data, no decoding on the phone, and half the server CPU.
+
+---
 
 ## Getting started
 
@@ -19,235 +196,27 @@ npm run dev
 
 Open http://localhost:3000.
 
-You need an `ANTHROPIC_API_KEY` to write stories. `ELEVENLABS_API_KEY` is
-optional — without it the app narrates with the device's built-in speech voice
-and the rest works unchanged.
+An `ANTHROPIC_API_KEY` is required to write stories. `ELEVENLABS_API_KEY` is optional — without
+it the app narrates with the device's built-in speech voice and everything else works unchanged.
 
-## How it works
-
-### The age dial
-
-The dial from 2 to 7 is the core of the thing. It does not just swap
-vocabulary; each notch carries its own spec for page count, words per page,
-maximum sentence length, plot shape, how much tension is allowed, which
-narrative devices to use, and what to avoid. All of it lands in the prompt.
-
-A two-year-old gets six to eight pages of fifteen-word sentences built around a
-repeated refrain, with no villain anywhere. A seven-year-old gets a subplot,
-foreshadowing, and a morally interesting choice. Retuning that lives in one
-place: [`src/lib/age.ts`](src/lib/age.ts).
-
-### The story
-
-[`src/app/api/story/route.ts`](src/app/api/story/route.ts) calls Claude Opus 5
-with adaptive thinking and a Zod-typed structured output, so the response comes
-back as validated pages rather than prose to be parsed. Server-side fallbacks
-are enabled, so a declined request routes to another model instead of
-dead-ending. An output that will not read back as a story is retried once,
-automatically - it is a bad roll rather than a broken request, and a parent
-should never see the JSON complaint underneath.
-
-`effort` is set to `medium`, which was measured rather than assumed. Against
-`high` on identical briefs: 23 s and 1.2k output tokens at age four versus 51 s
-and 3.3k; 101 s versus 178 s at age seven. Every run of both stayed inside the
-age spec for page count and words per page. `high` spent three to four times the
-tokens deliberating and bought nothing measurable while a child sat waiting -
-the craft here comes from the system prompt, not the effort dial.
-
-The schema carries nothing that is not displayed, for the same reason. Output
-tokens are the whole of the wait, so a field nobody reads is latency charged to
-the parent for free.
-
-The route answers with an event stream rather than one late JSON blob. A good
-story is a couple of minutes of real thinking, and a still screen for two
-minutes reads as broken, so the browser is told when the model stops planning
-and starts writing, and gets a character count it can turn into an honest
-progress bar. Keeping bytes moving also means nothing in between decides the
-request has stalled.
-
-The system prompt in [`src/lib/story.ts`](src/lib/story.ts) is the other half of
-the quality. It covers the bedtime contract (nothing unresolved, the last two
-pages decelerate), read-aloud craft, and writing text that a speech model can
-actually speak — no parentheses, no symbols, numbers spelled out.
-
-On mash-ups it evokes the genre rather than reproducing the property: ask for
-Star Wars and you get space knights with humming blades and a wise mentor in a
-desert, with original names. Same delight, no one else's characters.
-
-### The voice
-
-The voice studio records three short passages, all in the same voice, coming to
-about ninety seconds together. Both of those numbers are ElevenLabs' guidance
-rather than taste, and both are counter-intuitive enough to be worth stating:
-
-- **One to two minutes is optimal**, and "avoid recording more than 3 minutes,
-  this will yield little improvement and can, in some cases, even be detrimental
-  to the clone." Instant cloning is the one place where more audio makes things
-  worse, and what it degrades is stability - which is heard as invented words.
-  The studio shows a band to land inside rather than a bar to fill, and says so
-  at both ends. Thirty minutes upward is a different product entirely:
-  Professional Voice Cloning, which trains a model rather than embedding a
-  sample.
-- **"Good consistent input = good consistent output"**, from "a single speaker
-  with steady tone and performance." An earlier version of this app asked for
-  warm, then broadly comic, then a whisper, on the theory that range in gives
-  range out. It does not - instant cloning builds one embedding, and three
-  performances average into a muddier one. The variety now lives in the writing
-  instead: description, a line of dialogue, a question, a soft landing.
-
-A **Hear it** button plays a sample line back through the real narration route,
-so a poor clone is caught there rather than at bedtime.
-
-How the audio is captured matters more than any of it, which is why every
-browser processor is switched off during recording - see `startRecording` in
-[`src/components/VoiceStudio.tsx`](src/components/VoiceStudio.tsx).
-
-The recordings go to ElevenLabs Instant Voice Cloning (`POST /v1/voices/add`)
-and the returned voice id is stored locally.
-
-Narration is one control with three settings, in the voice studio:
-
-| | Model | What it is for |
-| --- | --- | --- |
-| **Steady** | multilingual v2, stability 0.6 | The plainest read. Safest, flattest. |
-| **Natural** | multilingual v2, stability 0.4 | Real intonation, still unmistakably the person. The default. |
-| **Lively** | Eleven v3, directed with audio tags | Acts the story out. Livelier, and further from the recording. |
-
-They are one dial rather than several settings because model and stability
-interact, and separate knobs can be set against each other. Stability is the
-lever that matters: high holds the voice steady and flattens it into a monotone,
-low lets it move at the risk of wandering.
-
-The point of the dial is that this is not a judgement anyone can make from a
-description. **Hear it** in the studio reads a sample line under the current
-setting, so comparing all three takes half a minute. An Instant Voice Clone is
-two minutes of audio, and how well it survives each mode varies by voice.
-
-Two things follow from v3 when **Lively** is on:
-
-- **v3 takes direction through audio tags.** Every page already carries a mood
-  from the story model, and [`src/lib/elevenlabs.ts`](src/lib/elevenlabs.ts)
-  turns that into a tag - `[warmly]`, `[playfully]`, `[in awe]`, `[brightly]`,
-  `[softly]` - plus a small change of pace. The tags are direction, not speech:
-  measured against the API's own alignment, `[in awe]` occupies 0.13 s of
-  silence rather than the ~0.6 s it would take to say. Tags come from a closed
-  set chosen server-side, never from free text. The v2 modes get neither tags
-  nor mood pacing, both of which read as edited rather than read.
-- **v3 rejects `previous_text` / `next_text`** with a 400. So on v3 continuity
-  across a page turn cannot come from request stitching.
-
-Which is why narration is generated in *segments* of whole pages, planned by
-[`src/lib/narration.ts`](src/lib/narration.ts) - the first one short so the
-first words arrive quickly, later ones longer since they are fetched while the
-previous is still playing. One generation per segment means a sentence's energy
-carries over the page break instead of resetting, in every mode. On the v2 modes
-the neighbouring pages are also passed as stitching context.
-
-Pace is set twice, on purpose. Generation runs at 0.88 because reading to a
-sleepy child is slower than talking, and the reader's **Speed** control changes
-`playbackRate` on top of that - instant, free, needing no regeneration, and
-pitch-preserved so slower still sounds like the same person.
-
-### Following the words
-
-Narration is requested from `/v1/text-to-speech/{voice}/with-timestamps`, which
-returns character-level alignment alongside the audio.
-[`src/app/api/voice/speak/route.ts`](src/app/api/voice/speak/route.ts) folds
-that into per-word start and end times, expressed as character offsets into each
-page's own text - which is also how the mood tags get dropped from the timings
-without any string matching.
-
-The reader then follows the audio's own clock on an animation frame: the word
-being spoken lifts and warms, words already read stay legible, words still to
-come sit back, and the page turns itself at the moment the voice reaches it.
-Words are maximal runs of non-whitespace, tokenised by the same function on both
-sides of the wire, so punctuation never gets orphaned.
-
-Two details are what make it feel locked to the voice rather than to a timer.
-The highlight **arrives instantly and only fades out** - at speech rate most
-words last under a fifth of a second, so any cross-fade on the way in smears one
-word into the next and the whole line reads as a sweep. And it runs a fixed
-80 ms *ahead* of `currentTime`, which is the decode position rather than the
-moment sound leaves the speaker; the gap between those two is real, worst on
-Bluetooth, and reading along works better when the eye arrives a fraction before
-the ear anyway.
-
-It is deliberately not a karaoke bar - a filled block sliding through text is
-hard to read in a dark room and reads as a game rather than a book - and
-**Follow the words** in the reader turns it off entirely.
-
-With no ElevenLabs key the device voice takes over, and where the browser fires
-`onboundary` events it gets the same word-by-word highlighting.
-
-### Saying the name right
-
-A speech model reads an unfamiliar name phonetically and gets it wrong, and a
-story that mispronounces the child it was written for is worse than one that
-never used their name. So a parent can write how it actually sounds - `Sur sha`
-for Saoirse - and that spelling is what reaches the voice while the page still
-shows the real one.
-
-The catch is that word timings are matched to the displayed text by position, so
-the substitution must not change the word count. `normaliseSaysLike` in
-[`src/lib/narration.ts`](src/lib/narration.ts) collapses whitespace to hyphens
-for exactly that reason, the match is whole-word so `Amara` never fires inside
-`Amaranth`, and possessives survive. If the counts ever did diverge, the page
-keeps its start and end and quietly loses only the highlighting.
-
-Each segment - audio and timings together - is cached in IndexedDB keyed by
-voice, so re-reads are free and work offline.
-
-**On consent.** Cloning a voice requires affirming it is your own or that you
-have the speaker's explicit permission, and the API route rejects the request
-without it — the gate is not only in the UI. ElevenLabs independently runs a
-voice-captcha check and may return `requires_verification`, which the app
-surfaces rather than hides.
-
-## Layout
-
-```
-src/
-  app/
-    api/config/         which providers are configured (no secrets exposed)
-    api/story/          Claude Opus 5, structured output
-    api/voice/clone/    ElevenLabs Instant Voice Cloning
-    api/voice/speak/    per-segment narration plus word timings
-    api/voice/list/     list and delete cloned voices
-  components/
-    AgeDial             the 2-7 dial and what it implies
-    ElementPicker       characters, worlds, mash-ups, free text
-    ThemePicker         four palettes, applied live
-    VoiceStudio         recording, consent, cloning
-    StoryReader         the reader, lighting each word as it is spoken
-                        and remembering where it stopped
-  lib/
-    age.ts              the age engine
-    story.ts            schema, system prompt, prompt builder
-    storyStream.ts      client side of the story event stream
-    narration.ts        segments, word tokens, timings - shared by both sides
-    elevenlabs.ts       server-side ElevenLabs wrapper, tags, voice settings
-    audio.ts            base64 to Blob
-    storage.ts          IndexedDB persistence
-    useNarrator.ts      playback, word tracking, caching, prefetch, fallback
-    themes.ts           theme definitions
+```bash
+npm run typecheck
+npm run lint
+npm run build
 ```
 
-## Cost
+### Cost
 
-Roughly, per story: a few cents for the text. Narration runs about $0.10 per
-1,000 characters on multilingual v2 and on v3 alike, so a 700-word story is
-around 40 cents the first time and free on every replay, since audio is cached
-locally. Changing how it reads re-generates a story once, because the cache is
-keyed by mode; changing the speed does not, because that happens at playback.
-
-To cut narration cost roughly in half at some real expense to warmth, set
-`ELEVENLABS_TTS_MODEL=eleven_flash_v2_5`, which overrides all three modes.
-Word timings work the same on every model.
+A few cents of text per story. Narration runs about $0.10 per 1,000 characters, so a 700-word
+story is around 40 cents the first time and free on every replay, since the audio is cached
+locally. `ELEVENLABS_TTS_MODEL=eleven_flash_v2_5` roughly halves it, at real cost to warmth.
 
 ## Deploying
 
-Set up for **Cloudflare Workers** via the OpenNext adapter - see
-[DEPLOY.md](DEPLOY.md) for the steps.
+Set up for **Cloudflare Workers** through the OpenNext adapter, and the free plan is enough —
+the app shell is static assets, which never invoke the Worker, and the API routes spend their
+time waiting on Anthropic and ElevenLabs rather than burning CPU. Full steps, and why
+Cloudflare Pages is not the free alternative it looks like, in [DEPLOY.md](DEPLOY.md).
 
 ```bash
 npx wrangler login
@@ -256,10 +225,9 @@ npx wrangler secret put ELEVENLABS_API_KEY
 npm run deploy
 ```
 
-The free Workers plan is enough — the app shell is static assets, which never
-invoke the Worker, and the API routes are almost entirely waiting on Anthropic
-and ElevenLabs rather than burning CPU. [DEPLOY.md](DEPLOY.md) has the numbers,
-plus why Cloudflare Pages is not the free alternative it looks like.
+Nothing in the app is Cloudflare-specific, so it still deploys to Vercel unchanged.
 
-Nothing in the app is Cloudflare-specific, so it still deploys to Vercel
-unchanged.
+---
+
+Not affiliated with Anthropic or ElevenLabs. Any franchise a story evokes belongs to its owners —
+Somni writes originals on purpose.
