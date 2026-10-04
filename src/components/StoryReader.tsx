@@ -66,19 +66,34 @@ const Progress = memo(function Progress({
   onGo: (index: number) => void;
 }) {
   return (
-    <div className="flex items-center justify-center gap-1.5">
+    <div className="flex items-center justify-center">
       {Array.from({ length: count }, (_, index) => (
+        /*
+         * The dot is the mark; the button around it is the target. Drawn alone
+         * these were 6px tall and a few pixels wide, sitting directly above the
+         * play control - far under the 44px a thumb needs, so the usual outcome
+         * was jumping to the wrong page or hitting play by mistake. The padding
+         * carries the touch area without changing how the strip looks.
+         */
         <button
           key={index}
           type="button"
           aria-label={`Go to slide ${index + 1}`}
+          aria-current={index === current ? "true" : undefined}
           onClick={() => onGo(index)}
-          className="h-1.5 rounded-full transition-all"
-          style={{
-            width: index === current ? 24 : 8,
-            background: index === current ? "var(--accent)" : "var(--card-strong)",
-          }}
-        />
+          className="flex h-11 items-center justify-center px-1"
+        >
+          <span
+            className="block h-1.5 rounded-full transition-all"
+            style={{
+              width: index === current ? 24 : 8,
+              // The inactive dots were --card-strong, which is a translucent
+              // wash barely a shade off the sky behind it.
+              background: index === current ? "var(--accent)" : "var(--ink-soft)",
+              opacity: index === current ? 1 : 0.5,
+            }}
+          />
+        </button>
       ))}
     </div>
   );
@@ -113,6 +128,8 @@ export function StoryReader({
   const [followWords, setFollowWords] = useState(true);
   const [showNotes, setShowNotes] = useState(false);
   const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const slideRef = useRef<HTMLDivElement | null>(null);
 
   const slides = useMemo<Slide[]>(
     () => [
@@ -144,6 +161,17 @@ export function StoryReader({
     if (slide.kind === "page") progressRef.current(slide.index);
     if (slide.kind === "end") progressRef.current(0);
   }, [slide]);
+
+  /**
+   * Move focus onto each page as it arrives.
+   *
+   * On the first render this also pulls focus out of the page behind, which the
+   * reader has replaced entirely - otherwise opening a story from the shelf
+   * leaves focus on a button that no longer exists.
+   */
+  useEffect(() => {
+    slideRef.current?.focus({ preventScroll: true });
+  }, [slideIndex]);
 
   // Narration owns the page while it is reading: slide n+1 holds page n.
   const handleNarratedPage = useCallback((page: number) => {
@@ -201,10 +229,21 @@ export function StoryReader({
   }, [goTo, slideIndex, onExit]);
 
   function onTouchEnd(event: React.TouchEvent) {
-    if (touchStartX.current === null) return;
-    const delta = event.changedTouches[0].clientX - touchStartX.current;
-    if (Math.abs(delta) > 60) goTo(slideIndex + (delta < 0 ? 1 : -1));
+    if (touchStartX.current === null || touchStartY.current === null) return;
+
+    const dx = event.changedTouches[0].clientX - touchStartX.current;
+    const dy = event.changedTouches[0].clientY - touchStartY.current;
     touchStartX.current = null;
+    touchStartY.current = null;
+
+    /*
+     * The vertical component decides it. A long page scrolls, and a thumb
+     * dragging down a page of text almost never travels straight: without this
+     * check any scroll that wandered sixty pixels sideways turned the page,
+     * which reads as the book flipping itself at random.
+     */
+    if (Math.abs(dx) <= 60 || Math.abs(dx) <= Math.abs(dy) * 1.5) return;
+    goTo(slideIndex + (dx < 0 ? 1 : -1));
   }
 
   const onThisPage = slide.kind === "page" && narrator.page === slide.index;
@@ -225,12 +264,19 @@ export function StoryReader({
 
   return (
     <div
-      className="relative flex min-h-dvh flex-col"
-      onTouchStart={(e) => (touchStartX.current = e.touches[0].clientX)}
+      /* Exactly the viewport, so the controls below cannot be pushed off it. */
+      className="relative flex h-dvh flex-col"
+      onTouchStart={(e) => {
+        touchStartX.current = e.touches[0].clientX;
+        touchStartY.current = e.touches[0].clientY;
+      }}
       onTouchEnd={onTouchEnd}
     >
       {/* Top bar */}
-      <header className="relative z-10 flex items-center justify-between gap-3 px-5 pt-5">
+      <header
+        className="pad-sides-safe relative z-10 flex items-center justify-between gap-3"
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1.25rem)" }}
+      >
         <button
           type="button"
           onClick={onExit}
@@ -329,8 +375,35 @@ export function StoryReader({
       )}
 
       {/* Slide */}
-      <main className="relative z-10 flex flex-1 items-center justify-center px-6 py-8">
-        <div key={slideIndex} className="animate-rise w-full max-w-2xl text-center">
+      {/*
+        The page itself scrolls, not the screen. An age-7 story runs to a few
+        hundred words, and with the whole reader growing to fit it the play,
+        Back and Next controls ended up below the fold - on a surface whose
+        only other way forward is a swipe. `min-h-0` is what lets this flex
+        child shrink instead of pushing the footer away.
+      */}
+      <main className="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 py-8">
+        <div className="flex min-h-full items-center justify-center">
+        {/*
+          Focus follows the page. Every way of turning one - the Next button, a
+          swipe, or the narration reaching the end of a page - swaps this
+          subtree via `key`, and without moving focus a screen reader says
+          nothing at all and stays wherever it was. Reading a story aloud is the
+          whole product, so it has to be announced.
+        */}
+        <div
+          key={slideIndex}
+          ref={slideRef}
+          tabIndex={-1}
+          aria-label={
+            slide.kind === "cover"
+              ? `Cover: ${story.title}`
+              : slide.kind === "end"
+                ? "The end"
+                : `Page ${slide.index + 1} of ${story.pages.length}`
+          }
+          className="animate-rise w-full max-w-2xl text-center outline-none"
+        >
           {slide.kind === "cover" && (
             <>
               <p className="ink-soft text-xs uppercase tracking-[0.3em]">
@@ -378,15 +451,26 @@ export function StoryReader({
             </>
           )}
         </div>
+        </div>
       </main>
 
       {/* Controls */}
-      <footer className="relative z-10 px-5 pb-7">
+      {/* Clear of the home indicator once installed; 1.75rem anywhere without one. */}
+      <footer
+        className="pad-sides-safe relative z-10"
+        style={{ paddingBottom: "max(1.75rem, env(safe-area-inset-bottom, 0px))" }}
+      >
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
           <Progress count={slides.length} current={slideIndex} onGo={goTo} />
 
           {narrator.error && (
-            <p className="text-center text-xs" style={{ color: "#ff9d9d" }}>
+            /* The only sign that the voice failed rather than simply not started. */
+            <p
+              role="alert"
+              aria-atomic="true"
+              className="text-center text-xs"
+              style={{ color: "#ff9d9d" }}
+            >
               {narrator.error}
             </p>
           )}
@@ -410,7 +494,16 @@ export function StoryReader({
                 color: "var(--accent-ink)",
                 boxShadow: isPlayingHere ? "0 0 0 10px var(--glow)" : undefined,
               }}
-              aria-label={isPlayingHere ? "Pause narration" : "Read this page aloud"}
+              aria-label={
+                isLoadingHere
+                  ? "Loading narration"
+                  : isPlayingHere
+                    ? "Pause narration"
+                    : "Read this page aloud"
+              }
+              // The glyph alone is "…" with no spoken equivalent, so the wait
+              // between tapping play and hearing anything was silent.
+              aria-busy={isLoadingHere || undefined}
             >
               {isLoadingHere ? "…" : isPlayingHere ? "‖" : "▶"}
             </button>

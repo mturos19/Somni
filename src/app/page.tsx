@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgeDial } from "@/components/AgeDial";
 import { ElementPicker, EMPTY_SELECTION, type Selection } from "@/components/ElementPicker";
+import { InstallPrompt } from "@/components/InstallPrompt";
 import { StarField } from "@/components/StarField";
 import { StoryReader } from "@/components/StoryReader";
 import { ThemePicker } from "@/components/ThemePicker";
@@ -12,6 +13,7 @@ import { StoryError, writeStory } from "@/lib/storyStream";
 import { DEFAULT_THEME, themeById, themeStyle } from "@/lib/themes";
 import {
   newId,
+  requestPersistence,
   profiles as profileStore,
   stories as storyStore,
   voices as voiceStore,
@@ -40,6 +42,9 @@ const WRITING_LINES = [
 /** Shown after the rare generation that came back unreadable. */
 const RETRY_LINES = ["That one came out tangled. Starting it again..."];
 
+/** How many of the most recent stories the shelf shows before asking. */
+const SHELF_PREVIEW = 8;
+
 export default function Home() {
   const [profile, setProfile] = useState<ChildProfile>(() => ({
     id: "primary",
@@ -56,6 +61,7 @@ export default function Home() {
   const [config, setConfig] = useState({ story: true, voice: true });
   const [reading, setReading] = useState<SavedStory | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
+  const [showAllStories, setShowAllStories] = useState(false);
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<"thinking" | "writing">("thinking");
   const [retried, setRetried] = useState(false);
@@ -69,6 +75,9 @@ export default function Home() {
   const expectedRef = useRef(1);
   const [error, setError] = useState<{ message: string; hint?: string } | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  /** The control that opened the overlay, so focus can go back to it. */
+  const writeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const theme = useMemo(() => themeById(profile.themeId), [profile.themeId]);
 
@@ -79,16 +88,27 @@ export default function Home() {
 
     void (async () => {
       const [stored, storedStories, storedVoices] = await Promise.all([
-        profileStore.all(),
+        profileStore.load(),
         storyStore.all(),
         voiceStore.all(),
       ]);
       if (cancelled) return;
-      if (stored.length > 0) setProfile(stored[0]);
       setLibrary(storedStories);
       setSavedVoices(storedVoices);
+
+      /*
+       * Only start saving once we know what was there. A null read is a failed
+       * read, not an empty one - marking the app hydrated on that would let the
+       * effect below write this component's blank starting profile over a real
+       * one, losing the child's name, their age and the voice they chose.
+       */
+      if (stored === null) return;
+      if (stored.length > 0) setProfile(stored[0]);
       setHydrated(true);
     })();
+
+    // Nothing depends on the answer; it only ever makes the shelf safer.
+    void requestPersistence();
 
     void fetch("/api/config")
       .then((res) => res.json())
@@ -132,6 +152,21 @@ export default function Home() {
     }, 200);
 
     return () => clearInterval(id);
+  }, [busy]);
+
+  /**
+   * Hold focus inside the writing overlay while it is up, and hand it back when
+   * it comes down. Without this a parent tabbing during the wait edits the form
+   * underneath a backdrop they cannot see through.
+   */
+  useEffect(() => {
+    if (busy) {
+      overlayRef.current?.focus();
+      return;
+    }
+    // Only reclaim focus if it was left nowhere, so this never steals it from
+    // the reader that has just opened.
+    if (document.activeElement === document.body) writeButtonRef.current?.focus();
   }, [busy]);
 
   /* -------------------------------- actions -------------------------------- */
@@ -193,8 +228,17 @@ export default function Home() {
       // making a parent wait on two IndexedDB round trips after a minute of
       // waiting already is the wrong order.
       setReading(saved);
-      await storyStore.save(saved);
+      const kept = await storyStore.save(saved);
       setLibrary(await storyStore.all());
+
+      // Said here rather than over the reader: the story is open and readable
+      // right now, and this only matters when they come back for it.
+      if (!kept) {
+        setError({
+          message: "This story could not be saved on this device.",
+          hint: "Storage may be full, or site data may be switched off. It will read fine tonight, but it will not be on the shelf tomorrow.",
+        });
+      }
     } catch (err) {
       if (err instanceof StoryError) setError({ message: err.message, hint: err.hint });
       else {
@@ -209,6 +253,16 @@ export default function Home() {
   }
 
   async function removeStory(id: string) {
+    const story = library.find((s) => s.id === id);
+    // Small target, thumb's edge, and the only copy in existence - the story
+    // was never on a server and cannot be written again the same way.
+    if (
+      !window.confirm(
+        story ? `Delete "${story.title}"? This cannot be undone.` : "Delete this story?",
+      )
+    ) {
+      return;
+    }
     await storyStore.remove(id);
     setLibrary(await storyStore.all());
   }
@@ -245,7 +299,15 @@ export default function Home() {
     <div className="sky min-h-dvh" style={themeStyle(theme)}>
       <StarField />
 
-      <div className="relative z-10 mx-auto w-full max-w-2xl px-5 pb-24 pt-8">
+      {/*
+        Bottom clearance has to cover the sticky write button and, when it is
+        showing, the install card above it - plus the home indicator once this
+        is installed and drawing edge to edge.
+      */}
+      <div
+        className="pad-sides-safe pad-top-safe relative z-10 mx-auto w-full max-w-2xl"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 12rem)" }}
+      >
         {/* Masthead */}
         <header className="flex items-center justify-between gap-4">
           <div>
@@ -275,9 +337,18 @@ export default function Home() {
               borderLeft: "3px solid var(--accent-2)",
             }}
           >
-            No <code>ANTHROPIC_API_KEY</code> found. Add one to{" "}
-            <code>.env.local</code> and restart the dev server to start writing
-            stories.
+            {process.env.NODE_ENV === "production" ? (
+              <>
+                Somni cannot write new stories just now. Anything already on
+                your shelf still opens and still reads aloud.
+              </>
+            ) : (
+              <>
+                No <code>ANTHROPIC_API_KEY</code> found. Add one to{" "}
+                <code>.env.local</code> and restart the dev server to start
+                writing stories.
+              </>
+            )}
           </div>
         )}
 
@@ -306,6 +377,18 @@ export default function Home() {
                 color: "var(--ink)",
               }}
             />
+
+            {/*
+              Said before they tap, not discovered afterwards. Skipping the name
+              is allowed and the story still works - it just calls the hero "the
+              child" throughout, which is a poor first impression of an app
+              whose whole point is that the story is about *them*.
+            */}
+            {profile.name.trim().length === 0 && (
+              <p className="ink-soft mt-2 text-[11px]">
+                Left blank, the story will just say &ldquo;the child&rdquo;.
+              </p>
+            )}
 
             {/*
               Only worth asking once there is a name to ask about. A story that
@@ -356,6 +439,14 @@ export default function Home() {
 
         {error && (
           <div
+            /*
+             * Announced, because it is the only thing that distinguishes a
+             * failure from a success: on either outcome the overlay simply
+             * disappears, and this banner sits far up a scrolled page where
+             * nobody is looking.
+             */
+            role="alert"
+            aria-atomic="true"
             className="mt-5 rounded-2xl px-4 py-3 text-sm"
             style={{ background: "var(--card-strong)", borderLeft: "3px solid #ff8a8a" }}
           >
@@ -371,7 +462,7 @@ export default function Home() {
               Story shelf
             </h2>
             <div className="mt-3 space-y-2">
-              {library.slice(0, 8).map((item) => (
+              {(showAllStories ? library : library.slice(0, SHELF_PREVIEW)).map((item) => (
                 <div
                   key={item.id}
                   className="glass flex items-center gap-3 rounded-2xl px-4 py-3"
@@ -406,14 +497,33 @@ export default function Home() {
                 </div>
               ))}
             </div>
+
+            {/*
+              Without this the shelf showed its first eight and quietly hid the
+              rest - and a story you cannot see is a story you cannot delete,
+              while its narration audio stays on the device for good.
+            */}
+            {library.length > SHELF_PREVIEW && (
+              <button
+                type="button"
+                onClick={() => setShowAllStories((v) => !v)}
+                className="ink-soft mt-3 w-full rounded-2xl py-2.5 text-xs font-semibold"
+                style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+              >
+                {showAllStories
+                  ? "Show fewer"
+                  : `Show all ${library.length} stories`}
+              </button>
+            )}
           </section>
         )}
       </div>
 
       {/* Sticky write button */}
-      <div className="fixed inset-x-0 bottom-0 z-20 px-5 pb-5">
+      <div className="pad-sides-safe pad-bottom-safe fixed inset-x-0 bottom-0 z-20">
         <div className="mx-auto max-w-2xl">
           <button
+            ref={writeButtonRef}
             type="button"
             onClick={() => void createStory()}
             disabled={busy || !config.story}
@@ -432,11 +542,26 @@ export default function Home() {
       {/* Writing overlay */}
       {busy && (
         <div
-          className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-6 px-6 backdrop-blur-md"
+          /*
+           * The button that opened this becomes disabled on the same render, so
+           * the browser blurs it and focus falls to the body - the next Tab
+           * would land in the form behind an opaque backdrop. Taking focus here
+           * keeps it where the only thing happening actually is.
+           */
+          ref={overlayRef}
+          tabIndex={-1}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Writing your story"
+          className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-6 px-6 outline-none backdrop-blur-md"
           style={{ background: "rgba(0,0,0,0.5)" }}
         >
           <div className="animate-breathe text-6xl">{"\u{2728}"}</div>
-          <p className="story-text max-w-sm text-center text-xl">
+          {/*
+            A minute or two of silence is indistinguishable from a tap that
+            never registered, so the status line is spoken as it changes.
+          */}
+          <p role="status" className="story-text max-w-sm text-center text-xl">
             {(() => {
               const lines = retried
                 ? RETRY_LINES
@@ -472,6 +597,13 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/*
+        Inside the themed wrapper rather than in the layout, because the palette
+        lives on this element - mounted any higher it would be stuck on the
+        fallback theme no matter which one the family chose.
+      */}
+      <InstallPrompt />
 
       {studioOpen && (
         <VoiceStudio

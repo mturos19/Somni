@@ -4,12 +4,23 @@ import {
   requireKey,
   toFriendlyError,
 } from "@/lib/elevenlabs";
+import { grantVoice } from "@/lib/voiceOwnership";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MAX_SAMPLE_BYTES = 12 * 1024 * 1024; // per file
-const MAX_TOTAL_BYTES = 40 * 1024 * 1024;
+/**
+ * Sized to fit under the host's request body limit, not to ElevenLabs'.
+ *
+ * Vercel refuses a request body over 4.5 MB with its own 413 before this route
+ * is ever invoked, so limits above that are unenforceable here: the parent
+ * would see an opaque platform error instead of the explanation below. Three
+ * passages of ninety seconds come to well under a megabyte in Opus and about
+ * one and a half in the AAC that Safari records, so this is generous in
+ * practice while still landing inside the ceiling.
+ */
+const MAX_SAMPLE_BYTES = 2 * 1024 * 1024; // per file
+const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 
 /**
  * Above this, the quiet between sentences is audible enough to be worth
@@ -64,7 +75,10 @@ export async function POST(request: Request) {
     }
     if (total > MAX_TOTAL_BYTES) {
       return Response.json(
-        { error: "Those recordings are too large altogether." },
+        {
+          error: "Those recordings are too large altogether.",
+          hint: "Re-record the longest passage a little shorter, then try again.",
+        },
         { status: 413 },
       );
     }
@@ -108,12 +122,24 @@ export async function POST(request: Request) {
       requires_verification?: boolean;
     };
 
-    return Response.json({
-      voiceId: data.voice_id,
-      name,
-      requiresVerification: Boolean(data.requires_verification),
-      isolated: noisy,
-    });
+    /**
+     * Record the voice as this browser's. It is the only thing that later
+     * distinguishes the parent who made it from a stranger who learned its id,
+     * and it is what the delete route checks.
+     */
+    const headers = new Headers({ "Content-Type": "application/json" });
+    const cookie = await grantVoice(request, data.voice_id);
+    if (cookie) headers.append("Set-Cookie", cookie);
+
+    return new Response(
+      JSON.stringify({
+        voiceId: data.voice_id,
+        name,
+        requiresVerification: Boolean(data.requires_verification),
+        isolated: noisy,
+      }),
+      { headers },
+    );
   } catch (err) {
     return errorResponse(err);
   }

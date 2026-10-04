@@ -39,8 +39,14 @@ function describe(err: unknown): { error: string; hint?: string } {
     return { error: "Could not reach the story writer.", hint: "Check your connection." };
   }
   if (err instanceof Anthropic.APIError) {
+    // Logged in full, relayed never. These messages describe the *account* -
+    // "your credit balance is too low" and the like - and every visitor would
+    // otherwise read the owner's billing state off their own screen.
     console.error("[story] Anthropic error", err.status, err.message);
-    return { error: "The story writer had a problem.", hint: err.message };
+    return {
+      error: "The story writer had a problem.",
+      hint: "That is usually brief. Please try again in a moment.",
+    };
   }
   console.error("[story] unexpected", err);
   return { error: "Something went wrong writing that story." };
@@ -237,7 +243,13 @@ export async function POST(request: Request) {
             // schema. That is the "invalid JSON" a parent used to see, and it
             // is transient - so it is retried rather than reported.
             if (request.signal.aborted || !isRetryable(err) || tries === 1) throw err;
-            console.warn("[story] unreadable output, retrying", err);
+            // Only the kind of failure, never the payload: a schema error from
+            // the SDK carries the model's output, and that output is a story
+            // with a real child's name in it. Nothing identifying goes to logs.
+            console.warn(
+              "[story] unreadable output, retrying",
+              err instanceof Error ? err.name : typeof err,
+            );
           }
 
           if (answered) return;

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { decodeNarration } from "@/lib/audio";
+import { recycleAudioElement, takeAudioElement, unlockAudio } from "@/lib/audioUnlock";
 import { voices as voiceStore, type SavedVoice } from "@/lib/storage";
 import type { SpeakRequest } from "@/lib/narration";
 
@@ -135,6 +136,13 @@ export function VoiceStudio({
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  /** Identifies the current preview attempt, so a slow one cannot win. */
+  const previewRunRef = useRef(0);
+  /** Set between the tap on Record and the microphone actually opening. */
+  const startingRef = useRef(false);
+  /** Set once the studio has closed, so a late microphone is not kept. */
+  const closedRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
   /**
@@ -172,9 +180,61 @@ export function VoiceStudio({
     if (meterRef.current) meterRef.current.style.width = "0%";
   }, []);
 
+  /**
+   * Takes focus when the studio opens and gives it back to whatever opened it.
+   * Without the restore, closing the sheet drops focus to the body and a
+   * keyboard user starts again from the top of the page.
+   */
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    sheetRef.current?.focus();
+    return () => opener?.focus?.();
+  }, []);
+
+  /** Escape closes; Tab is kept inside the sheet. */
+  const onDialogKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = sheetRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable || focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      // Wrap at both ends, and catch the case where focus is on the sheet
+      // itself, which is where it starts.
+      if (event.shiftKey && (active === first || active === sheetRef.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    },
+    [onClose],
+  );
+
   const stopPreview = useCallback(() => {
+    /*
+     * Retires the attempt as well as the audio. Stopping a preview rejects the
+     * `play()` that is still pending, which lands in previewVoice's catch - and
+     * without bumping the token first that reads as a failure and puts "Could
+     * not play that back." on screen for an action the parent took on purpose.
+     */
+    previewRunRef.current += 1;
     if (previewRef.current) {
-      previewRef.current.el.pause();
+      // Back to the pool rather than dropped: it is unlocked, and the next
+      // preview would otherwise need a gesture it no longer has.
+      recycleAudioElement(previewRef.current.el);
       URL.revokeObjectURL(previewRef.current.url);
       previewRef.current = null;
     }
@@ -185,6 +245,7 @@ export function VoiceStudio({
   useEffect(() => {
     const recorded = recordingsRef.current;
     return () => {
+      closedRef.current = true;
       teardownMic();
       stopPreview();
       Object.values(recorded).forEach((r) => URL.revokeObjectURL(r.url));
@@ -197,6 +258,9 @@ export function VoiceStudio({
    * record it again, rather than at bedtime with a child waiting.
    */
   async function previewVoice(voiceId: string) {
+    // Synchronously, while the tap is still live. See audioUnlock.
+    unlockAudio();
+
     if (previewing === voiceId) {
       stopPreview();
       return;
@@ -205,6 +269,15 @@ export function VoiceStudio({
     stopPreview();
     setError(null);
     setPreviewing(voiceId);
+
+    /*
+     * Each attempt carries a token. Two voices tapped in quick succession each
+     * wait on their own request, and the slower one used to arrive afterwards
+     * and play over the top - with its `onended` then stopping the preview the
+     * parent was actually listening to.
+     */
+    previewRunRef.current += 1;
+    const run = previewRunRef.current;
 
     try {
       const body: SpeakRequest = {
@@ -221,23 +294,48 @@ export function VoiceStudio({
 
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
+        if (previewRunRef.current !== run) return;
         setError(detail.hint ? `${detail.error} ${detail.hint}` : detail.error);
         setPreviewing(null);
         return;
       }
 
-      const url = URL.createObjectURL(decodeNarration(await res.arrayBuffer()).audio);
-      const el = new Audio(url);
+      const buffer = await res.arrayBuffer();
+      if (previewRunRef.current !== run) return;
+
+      const url = URL.createObjectURL(decodeNarration(buffer).audio);
+      // An element unlocked back when "Hear it" was tapped. A fresh one would
+      // be refused here on iOS: the gesture was spent on the fetch above.
+      const el = takeAudioElement();
+      el.src = url;
       previewRef.current = { el, url };
-      el.onended = stopPreview;
+      el.onended = () => {
+        if (previewRunRef.current !== run) return;
+        stopPreview();
+      };
       await el.play();
     } catch {
+      if (previewRunRef.current !== run) return;
       setError("Could not play that back.");
       setPreviewing(null);
     }
   }
 
   async function startRecording(passageId: string) {
+    /**
+     * Synchronously, before anything is awaited.
+     *
+     * `streamRef` is only assigned once getUserMedia resolves, and on a phone
+     * that is a few hundred milliseconds with nothing on screen to say so - so
+     * a second tap is likely. Without this guard the second call overwrites
+     * `streamRef` and `audioCtxRef`, and the first stream is orphaned with no
+     * reference left to stop it: the operating system's microphone indicator
+     * then stays lit for the rest of the session. On an app that asks parents
+     * to record their own voice, that is the worst possible thing to get wrong.
+     */
+    if (startingRef.current || streamRef.current) return;
+    startingRef.current = true;
+
     setError(null);
     try {
       /**
@@ -265,6 +363,14 @@ export function VoiceStudio({
           channelCount: 1,
         },
       });
+
+      // The studio can be closed while the permission prompt is still up. The
+      // microphone we have just been granted is then unwanted, and nothing
+      // else will ever hold a reference to it.
+      if (closedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
 
       // Live level meter, so nobody records ninety seconds into a muted mic.
@@ -356,6 +462,11 @@ export function VoiceStudio({
           ...prev,
           [passageId]: { blob, url, seconds, noiseFloor },
         }));
+        // Also here, not only in stopRecording: the recorder can stop on its
+        // own when the microphone is taken away - an incoming call, a headset
+        // unplugged, permission revoked mid-sentence - and the panel would
+        // otherwise go on claiming to be recording after it had stopped.
+        setRecordingId(null);
         teardownMic();
       };
 
@@ -376,6 +487,8 @@ export function VoiceStudio({
         "Could not reach the microphone. Check that your browser has permission.",
       );
       teardownMic();
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -408,7 +521,21 @@ export function VoiceStudio({
           ? { text: "Workable. One more passage would help.", tone: "var(--accent-2)" }
           : { text: "Too short so far. Read another passage.", tone: "var(--ink-soft)" };
 
-  const canClone = consent && recordedCount > 0 && voiceName.trim().length > 0;
+  /**
+   * Roughly one passage read properly.
+   *
+   * A clone is permanent, costs money, and occupies one of a limited number of
+   * voice slots on the account - and a couple of seconds of audio makes a clone
+   * that sounds like nobody. The verdict above already says "too short"; this
+   * stops the button agreeing to do it anyway.
+   */
+  const MIN_CLONE_SECONDS = 25;
+
+  const canClone =
+    consent &&
+    recordedCount > 0 &&
+    totalSeconds >= MIN_CLONE_SECONDS &&
+    voiceName.trim().length > 0;
 
   async function createVoice() {
     if (!canClone) return;
@@ -474,26 +601,96 @@ export function VoiceStudio({
   }
 
   async function deleteVoice(voiceId: string) {
-    await fetch(`/api/voice/list?voiceId=${encodeURIComponent(voiceId)}`, {
-      method: "DELETE",
-    }).catch(() => {});
+    const voice = saved.find((v) => v.voiceId === voiceId);
+    const label = voice?.name ? `"${voice.name}"` : "this voice";
+    // Irreversible, and it costs ninety seconds of recording to undo. Worth
+    // one question, especially on a phone where the button is thumb-sized.
+    if (
+      !window.confirm(
+        `Delete ${label}? The recording is removed from ElevenLabs for good, and stories will go back to the device's built-in voice.`,
+      )
+    ) {
+      return;
+    }
+
+    let res: Response | null = null;
+    try {
+      res = await fetch(`/api/voice/list?voiceId=${encodeURIComponent(voiceId)}`, {
+        method: "DELETE",
+      });
+    } catch {
+      setError("Could not reach the voice service. The voice has been left alone.");
+      return;
+    }
+
+    /*
+     * 404 means it is already gone and 403 means this device cannot manage it;
+     * in both cases the local record is stale and should go. Anything else is a
+     * real failure, and forgetting the voice locally would strand it on the
+     * account with nothing left pointing at it.
+     */
+    if (!res.ok && res.status !== 404 && res.status !== 403) {
+      setError("That voice could not be deleted. Please try again.");
+      return;
+    }
+    if (res.status === 403) {
+      setError(
+        "That voice was made on another device, so only that device can delete it. Removing it from this one.",
+      );
+    }
+
     await voiceStore.remove(voiceId);
     setSaved(await voiceStore.all());
     if (selectedVoiceId === voiceId) onSelectVoice(null);
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto">
+    <div
+      /*
+       * A real dialog, not a div that happens to cover the screen. This is the
+       * surface that takes microphone consent and spends real money, and it
+       * renders last in the DOM - so without these a screen-reader parent would
+       * have to tab past the whole page behind it to reach the consent box, and
+       * would have no way to announce or escape it.
+       */
+      ref={sheetRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="voice-studio-title"
+      tabIndex={-1}
+      onKeyDown={onDialogKeyDown}
+      className="fixed inset-0 z-50 overflow-y-auto outline-none"
+    >
       <div
         className="fixed inset-0 backdrop-blur-sm"
         style={{ background: "rgba(0,0,0,0.55)" }}
-        onClick={onClose}
+        /*
+         * Only dismisses while there is nothing to lose. Recordings live in
+         * memory until the clone is made, so a stray tap in the gutter beside
+         * the card used to throw away ninety seconds of reading aloud without
+         * asking. With something recorded, the Close button is the way out.
+         */
+        onClick={recordedCount > 0 || recordingId ? undefined : onClose}
       />
-      <div className="relative mx-auto my-6 w-full max-w-2xl px-4">
+      {/*
+        The sheet scrolls inside a full-screen container, so its own margins
+        have to clear the notch and the home indicator - the parent element is
+        pinned to the very edges of the display.
+      */}
+      <div
+        className="relative mx-auto w-full max-w-2xl px-4"
+        style={{
+          marginTop: "calc(env(safe-area-inset-top, 0px) + 1.5rem)",
+          marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)",
+        }}
+      >
         <div className="glass-strong animate-rise rounded-3xl p-6 sm:p-8">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-[family-name:var(--font-display)] text-2xl">
+              <h2
+                id="voice-studio-title"
+                className="font-[family-name:var(--font-display)] text-2xl"
+              >
                 Your voice
               </h2>
               <p className="ink-soft mt-1 text-sm">
@@ -510,7 +707,12 @@ export function VoiceStudio({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Close"
+              /*
+               * Matches the visible word. Voice control works off what is
+               * written on the button, so "Close" as the accessible name made
+               * "tap Done" - the only thing a parent can see to say - miss.
+               */
+              aria-label="Done"
               className="shrink-0 rounded-full px-3 py-1.5 text-sm"
               style={{ background: "var(--card-strong)" }}
             >
@@ -652,6 +854,20 @@ export function VoiceStudio({
                   something this app will help with. ElevenLabs may also ask you
                   to read a short verification phrase to prove the voice is yours.
                 </span>
+                {/*
+                  Said plainly, at the moment the parent is deciding. Stories and
+                  narration never leave this device, but a voice clone cannot be
+                  made here - and a parent handing over their voice deserves to
+                  be told where it goes without having to go looking.
+                */}
+                <span className="ink-soft mt-1.5 block text-xs">
+                  Where this goes: your recordings are sent to{" "}
+                  <strong>ElevenLabs</strong>, who make the clone and keep it on
+                  their servers so stories can be read in it. Delete the voice
+                  here and it is deleted there too. Everything else - your
+                  child&apos;s name, their stories, and the narration audio -
+                  stays on this device and is never uploaded.
+                </span>
               </span>
             </label>
           </div>
@@ -684,6 +900,20 @@ export function VoiceStudio({
                           isRecording ? stopRecording() : void startRecording(passage.id)
                         }
                         disabled={recordingId !== null && !isRecording}
+                        /*
+                         * A fixed name. The visible label carries a running
+                         * timer, and without this the button's accessible name
+                         * changed every second - so a screen reader announced
+                         * the focused control once a second for the whole take,
+                         * talking over the passage being read aloud.
+                         */
+                        aria-label={
+                          isRecording
+                            ? "Stop recording"
+                            : rec
+                              ? "Record this passage again"
+                              : "Record this passage"
+                        }
                         className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition disabled:opacity-40"
                         style={{
                           background: isRecording ? "#ff6b6b" : "var(--accent)",
@@ -828,6 +1058,13 @@ function Notice({
     tone === "error" ? "#ff8a8a" : tone === "warn" ? "var(--accent-2)" : "var(--accent)";
   return (
     <div
+      /*
+       * Every notice in the studio goes through here - a failed clone, a voice
+       * that needs verifying, a successful one - so announcing it here covers
+       * all of them. Errors interrupt; the rest waits for a gap.
+       */
+      role={tone === "error" ? "alert" : "status"}
+      aria-atomic="true"
       className="mt-5 rounded-2xl px-4 py-3 text-sm"
       style={{ background: "var(--card-strong)", borderLeft: `3px solid ${border}` }}
     >

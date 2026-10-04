@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#150d33"/>
+      <stop offset="1" stop-color="#2e2060"/>
+    </linearGradient>
+    <radialGradient id="horizon" cx="0.5" cy="1.02" r="0.78">
+      <stop offset="0" stop-color="#5b45a8" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#453382" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#453382" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="dawn" cx="0.16" cy="0.04" r="0.6">
+      <stop offset="0" stop-color="#6a4fb8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#6a4fb8" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="moon" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#fdfaff"/>
+      <stop offset="0.5" stop-color="#e4d4ff"/>
+      <stop offset="1" stop-color="#b79cff"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="28.16" result="b"/>
+      <feComponentTransfer in="b" result="s">
+        <feFuncA type="linear" slope="0.72"/>
+      </feComponentTransfer>
+      <feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <mask id="crescent">
+      <rect width="512" height="512" fill="black"/>
+      <circle cx="256" cy="256" r="179.2" fill="white"/>
+      <circle cx="324.39" cy="213.27" r="184.58" fill="black"/>
+    </mask>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#sky)"/>
+  <rect width="512" height="512" fill="url(#dawn)"/>
+  <rect width="512" height="512" fill="url(#horizon)"/>
+  <path d="M 89.6 89.6 Q 94.208 100.35199999999999 104.96 104.96 Q 94.208 109.568 89.6 120.32 Q 84.99199999999999 109.568 74.24 104.96 Q 84.99199999999999 100.35199999999999 89.6 89.6 Z" fill="#ece4ff" opacity="0.95"/>
+  <path d="M 432.64 141.82399999999998 Q 436.1728 150.06719999999999 444.416 153.6 Q 436.1728 157.1328 432.64 165.376 Q 429.1072 157.1328 420.864 153.6 Q 429.1072 150.06719999999999 432.64 141.82399999999998 Z" fill="#ece4ff" opacity="0.8"/>
+  <path d="M 404.48 358.912 Q 409.7024 371.0976 421.88800000000003 376.32 Q 409.7024 381.5424 404.48 393.728 Q 399.2576 381.5424 387.072 376.32 Q 399.2576 371.0976 404.48 358.912 Z" fill="#ece4ff" opacity="0.95"/>
+  <path d="M 130.56 398.848 Q 133.7856 406.37440000000004 141.312 409.6 Q 133.7856 412.8256 130.56 420.35200000000003 Q 127.3344 412.8256 119.808 409.6 Q 127.3344 406.37440000000004 130.56 398.848 Z" fill="#ece4ff" opacity="0.75"/>
+  <path d="M 64 258.048 Q 66.4576 263.7824 72.19200000000001 266.24 Q 66.4576 268.6976 64 274.432 Q 61.5424 268.6976 55.808 266.24 Q 61.5424 263.7824 64 258.048 Z" fill="#ece4ff" opacity="0.6"/>
+  <path d="M 307.2 60.928000000000004 Q 309.6576 66.6624 315.392 69.12 Q 309.6576 71.5776 307.2 77.31200000000001 Q 304.7424 71.5776 299.008 69.12 Q 304.7424 66.6624 307.2 60.928000000000004 Z" fill="#ece4ff" opacity="0.6"/>
+  <path d="M 463.36 272.384 Q 465.3568 277.0432 470.016 279.04 Q 465.3568 281.0368 463.36 285.696 Q 461.3632 281.0368 456.704 279.04 Q 461.3632 277.0432 463.36 272.384 Z" fill="#ece4ff" opacity="0.5"/>
+  <path d="M 232.96 445.952 Q 235.1104 450.9696 240.12800000000001 453.12 Q 235.1104 455.2704 232.96 460.288 Q 230.80960000000002 455.2704 225.792 453.12 Q 230.80960000000002 450.9696 232.96 445.952 Z" fill="#ece4ff" opacity="0.5"/>
+  <g filter="url(#glow)">
+    <circle cx="256" cy="256" r="179.2" fill="url(#moon)" mask="url(#crescent)"/>
+  </g>
+</svg>

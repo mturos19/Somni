@@ -28,6 +28,9 @@ export const maxDuration = 180;
 /** Rough read-aloud rate, only ever used when alignment is missing. */
 const CHARS_PER_SECOND = 12.5;
 
+/** A little under the 4.5 MB a serverless response body is usually allowed. */
+const RESPONSE_BYTE_LIMIT = 4 * 1024 * 1024;
+
 const MOODS = new Set(["calm", "playful", "wonder", "brave", "sleepy"]);
 
 /** Header length, then the header, then the audio. See SpeakHeader. */
@@ -160,7 +163,28 @@ export async function POST(request: Request) {
           ),
         };
 
-    return new Response(frame(header, Buffer.from(data.audio_base64, "base64")), {
+    const framed = frame(header, Buffer.from(data.audio_base64, "base64"));
+
+    /*
+     * Hosts cap a buffered response body - Vercel at 4.5 MB - and past it the
+     * platform answers with its own error that the reader cannot explain. A
+     * segment is capped at SEGMENT_MAX_CHARS (see narration.ts), which comes to
+     * roughly three megabytes of mp3, so this should never fire. It exists so
+     * that if it ever does, a parent gets a sentence instead of a 413 from
+     * somewhere they have never heard of.
+     */
+    if (framed.byteLength > RESPONSE_BYTE_LIMIT) {
+      console.warn("[voice] narration too large to return", framed.byteLength);
+      return Response.json(
+        {
+          error: "That stretch of story was too long to narrate in one piece.",
+          hint: "Try again, or shorten the longest page.",
+        },
+        { status: 413 },
+      );
+    }
+
+    return new Response(framed, {
       headers: {
         "Content-Type": "application/octet-stream",
         "Cache-Control": "no-store",

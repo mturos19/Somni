@@ -41,6 +41,7 @@ export function ThemePicker({
               }}
             >
               <span
+                aria-hidden
                 className="flex h-12 w-12 items-center justify-center rounded-full text-xl"
                 style={{
                   background: `linear-gradient(135deg, ${theme.swatch[0]}, ${theme.swatch[2]})`,

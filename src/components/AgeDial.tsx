@@ -84,6 +84,8 @@ export function AgeDial({
             type="button"
             onClick={() => onChange(value)}
             aria-label={`Set age to ${value}`}
+            // Which age is chosen was carried only by colour and font weight.
+            aria-pressed={value === age}
             className={`h-8 w-8 rounded-full text-sm transition ${
               value === age ? "font-bold" : "ink-soft hover:opacity-100"
             }`}

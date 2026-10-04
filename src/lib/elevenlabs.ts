@@ -6,9 +6,9 @@
 import { tokenize, type PageTiming, type WordTiming } from "./narration";
 
 /**
- * Read on demand rather than at module scope: on Cloudflare Workers the
- * environment is attached to the isolate, and a constant captured while the
- * module first evaluates can miss it.
+ * Read on demand rather than at module scope. Several runtimes attach the
+ * environment per request rather than per process, so a constant captured
+ * while the module first evaluates can miss it.
  */
 export function elevenLabsBase(): string {
   return (
@@ -146,14 +146,6 @@ export function voiceSettingsFor(mode: VoiceMode, moods: string[], model: string
   };
 }
 
-export type VoiceSummary = {
-  voiceId: string;
-  name: string;
-  requiresVerification: boolean;
-  isCloned: boolean;
-  previewUrl: string | null;
-};
-
 export class ElevenLabsError extends Error {
   constructor(
     readonly status: number,
@@ -198,10 +190,13 @@ export async function toFriendlyError(res: Response): Promise<ElevenLabsError> {
         "Check ELEVENLABS_API_KEY in .env.local.",
       );
     case 403:
+      // The upstream detail here describes the *account's* plan and limits,
+      // which is the operator's business and not a visitor's. Logged, not sent.
+      if (detail) console.warn("[voice] upstream 403", detail);
       return new ElevenLabsError(
         403,
         "Your ElevenLabs plan does not allow this yet.",
-        detail || "Instant Voice Cloning needs at least the Starter plan.",
+        "Instant Voice Cloning needs at least the Starter plan.",
       );
     case 422:
       return new ElevenLabsError(
@@ -216,10 +211,13 @@ export async function toFriendlyError(res: Response): Promise<ElevenLabsError> {
         "Wait a moment and try again.",
       );
     default:
+      // Arbitrary upstream text, which has included billing state. It belongs
+      // in the logs, where the operator can see it, and nowhere else.
+      console.warn("[voice] upstream error", res.status, detail);
       return new ElevenLabsError(
         502,
-        "ElevenLabs had a problem.",
-        detail || `Upstream returned ${res.status}.`,
+        "The voice service had a problem.",
+        "Please try again in a moment.",
       );
   }
 }

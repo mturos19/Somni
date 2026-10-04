@@ -126,6 +126,29 @@ async function safe<T>(work: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+/**
+ * Asks the browser not to evict what this family has made.
+ *
+ * Everything Somni creates lives in this one browser and exists nowhere else -
+ * there is no server copy to restore from. Without persistence granted, stories
+ * and their narration are "best effort" storage and a browser clearing space
+ * may simply delete them. That matters more once the app is installed, because
+ * then it is expected to still be there in a month.
+ *
+ * Chrome grants this automatically to an installed app, Firefox prompts, and
+ * Safari decides on engagement. A refusal is not an error and changes nothing
+ * about how the app behaves.
+ */
+export async function requestPersistence(): Promise<boolean> {
+  try {
+    if (!navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 export function newId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -136,6 +159,21 @@ export function newId(): string {
 /* ---------------------------------- profiles --------------------------------- */
 
 export const profiles = {
+  /**
+   * Null means the read itself failed, which is not the same as there being no
+   * profile yet - and the difference matters. A caller that treats a failed
+   * read as "new user" will write a blank default straight back over a real
+   * profile, taking the child's name, age and the link to the cloned voice
+   * with it.
+   */
+  async load(): Promise<ChildProfile[] | null> {
+    try {
+      return await run<ChildProfile[]>(STORES.profiles, "readonly", (s) => s.getAll());
+    } catch (err) {
+      console.warn("[storage] could not read the profile", err);
+      return null;
+    }
+  },
   all: () => safe(run<ChildProfile[]>(STORES.profiles, "readonly", (s) => s.getAll()), []),
   save: (profile: ChildProfile) =>
     safe(run(STORES.profiles, "readwrite", (s) => s.put(profile)), undefined),
@@ -153,8 +191,21 @@ export const stories = {
     );
     return list.sort((a, b) => b.createdAt - a.createdAt);
   },
-  save: (story: SavedStory) =>
-    safe(run(STORES.stories, "readwrite", (s) => s.put(story)), undefined),
+  /**
+   * Reports whether the story actually landed, unlike everything else here.
+   * A story is a minute of waiting and the only copy that exists, so the one
+   * case worth telling a parent about is the device refusing to keep it -
+   * a full quota, or a browser with site data switched off.
+   */
+  async save(story: SavedStory): Promise<boolean> {
+    try {
+      await run(STORES.stories, "readwrite", (s) => s.put(story));
+      return true;
+    } catch (err) {
+      console.warn("[storage] could not save story", err);
+      return false;
+    }
+  },
   /**
    * Remembers how far a reading got. Written on each page turn, which is a
    * handful of small writes per story and worth it: bedtime gets interrupted,

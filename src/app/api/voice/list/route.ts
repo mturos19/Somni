@@ -1,52 +1,24 @@
-import {
-  elevenLabsBase,
-  errorResponse,
-  requireKey,
-  toFriendlyError,
-  type VoiceSummary,
-} from "@/lib/elevenlabs";
+import { elevenLabsBase, errorResponse, requireKey, toFriendlyError } from "@/lib/elevenlabs";
+import { owns } from "@/lib/voiceOwnership";
 
 export const runtime = "nodejs";
 
-type RawVoice = {
-  voice_id: string;
-  name?: string;
-  category?: string;
-  preview_url?: string | null;
-  safety_control?: string | null;
-  voice_verification?: { requires_verification?: boolean } | null;
-};
+/*
+ * There is deliberately no GET handler here.
+ *
+ * Every family's clone lives on one shared ElevenLabs account, so listing that
+ * account answers "whose voices exist, and what are their ids" to anyone who
+ * asks - and an id is all the other routes used to need. The app never called
+ * it: the voice picker reads this browser's own IndexedDB (see
+ * VoiceStudio.tsx), which is the only list that was ever the right one.
+ */
 
-/** Lists the voices on the account, cloned ones first. */
-export async function GET() {
-  try {
-    const key = requireKey();
-
-    const res = await fetch(`${elevenLabsBase()}/v1/voices`, {
-      headers: { "xi-api-key": key },
-      cache: "no-store",
-    });
-    if (!res.ok) throw await toFriendlyError(res);
-
-    const data = (await res.json()) as { voices?: RawVoice[] };
-
-    const voices: VoiceSummary[] = (data.voices ?? []).map((v) => ({
-      voiceId: v.voice_id,
-      name: v.name ?? "Untitled voice",
-      isCloned: v.category === "cloned" || v.category === "professional",
-      requiresVerification: Boolean(v.voice_verification?.requires_verification),
-      previewUrl: v.preview_url ?? null,
-    }));
-
-    voices.sort((a, b) => Number(b.isCloned) - Number(a.isCloned));
-
-    return Response.json({ voices });
-  } catch (err) {
-    return errorResponse(err);
-  }
-}
-
-/** Removes a cloned voice from the ElevenLabs account for good. */
+/**
+ * Removes a cloned voice from the ElevenLabs account for good.
+ *
+ * Only the browser that created the voice may delete it. The id alone is not
+ * proof of anything - see voiceOwnership.ts.
+ */
 export async function DELETE(request: Request) {
   try {
     const key = requireKey();
@@ -54,6 +26,16 @@ export async function DELETE(request: Request) {
     const voiceId = new URL(request.url).searchParams.get("voiceId")?.trim();
     if (!voiceId) {
       return Response.json({ error: "No voice specified." }, { status: 400 });
+    }
+
+    if (!(await owns(request, voiceId))) {
+      return Response.json(
+        {
+          error: "That voice was not created on this device.",
+          hint: "A voice can only be deleted from the device that recorded it.",
+        },
+        { status: 403 },
+      );
     }
 
     const res = await fetch(

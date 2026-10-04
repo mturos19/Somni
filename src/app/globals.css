@@ -29,6 +29,16 @@
 html,
 body {
   height: 100%;
+  /*
+   * Both elements, not just body. Installed on Android there is no browser
+   * chrome to absorb an over-scroll, and the pull-to-refresh gesture would
+   * otherwise reload the app mid-story.
+   */
+  overscroll-behavior-y: none;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -36,7 +46,55 @@ body {
   color: var(--ink);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior-y: none;
+}
+
+/*
+ * Controls are tapped, not read. Several of them - the reader's play and page
+ * glyphs especially - are literal text, and a thumb resting on one long enough
+ * otherwise raises a selection handle or iOS's copy callout.
+ */
+button {
+  -webkit-touch-callout: none;
+  user-select: none;
+  /*
+   * Drops the browser's wait for a possible double tap, which on a control
+   * means both a ~300ms lag and, on Back/Next in the reader, an accidental
+   * zoom when a child taps twice in a row.
+   */
+  touch-action: manipulation;
+}
+
+/*
+ * iOS zooms the whole page in when a field smaller than 16px takes focus, and
+ * does not zoom back out: the parent is left on a magnified, sideways-scrolling
+ * page in the middle of typing their child's name. The designed sizes stay as
+ * they are anywhere there is a real pointer.
+ */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em);
+  }
+}
+
+/*
+ * Safe areas. Installed, the app draws edge to edge under the notch and the
+ * home indicator, so anything pinned to an edge has to hold itself clear of
+ * one. `max()` rather than addition: the inset is 0 on a phone without a
+ * cutout, and the designed padding should still apply there.
+ */
+.pad-bottom-safe {
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+}
+
+.pad-sides-safe {
+  padding-left: max(1.25rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1.25rem, env(safe-area-inset-right, 0px));
+}
+
+.pad-top-safe {
+  padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
 }
 
 /* The night sky every screen sits on. */

@@ -1,9 +1,8 @@
-# Deploying Somni to Cloudflare
+# Deploying Somni to Vercel
 
-Somni runs on **Cloudflare Workers** through the
-[OpenNext](https://opennext.js.org/cloudflare) adapter, which turns a normal
-`next build` into a Worker. Nothing in the app is Cloudflare-specific — the same
-code still runs under `next dev` and would still deploy to Vercel.
+Somni is a stock Next.js 16 app. There is no adapter and no platform SDK —
+`src/` imports nothing from any host. It runs under `next dev` locally and
+deploys to Vercel as-is.
 
 Everything below assumes you are in the project root.
 
@@ -11,209 +10,192 @@ Everything below assumes you are in the project root.
 
 ## Before you start
 
-**The free Workers plan is enough.** See [Running this for free](#running-this-for-free)
-below for why, and for the two things that would push you onto a paid plan.
+**The free Hobby plan is enough to run it.** See
+[What this costs](#what-this-costs) for the one thing that would push you to
+Pro.
 
 You need:
 
-- A Cloudflare account
+- A Vercel account
 - `ANTHROPIC_API_KEY` — https://console.anthropic.com/settings/keys
 - `ELEVENLABS_API_KEY` — https://elevenlabs.io/app/settings/api-keys
   (optional; without it stories are narrated by the device's built-in voice)
 
 ---
 
-## 1. Log in
+## 1. Push the repo
 
-```bash
-npx wrangler login
-```
+Vercel deploys from Git. Push this repository to GitHub, GitLab or Bitbucket if
+it is not there already.
 
-This opens a browser and authorises Wrangler against your account.
+## 2. Import the project
 
-## 2. Name the Worker
+Go to [vercel.com/new](https://vercel.com/new) and import the repository.
+Vercel detects Next.js and fills in the build settings itself — there is nothing
+to change.
 
-`somni` is the default in [`wrangler.jsonc`](wrangler.jsonc). Worker names are
-unique per account, so change `"name"` if you already have one called that. The
-name becomes part of the free subdomain you get:
-`somni.<your-subdomain>.workers.dev`.
+Do not deploy yet. Add the environment variables first, or the first build will
+ship without the keys.
 
-## 3. Upload the API keys as secrets
+## 3. Add the environment variables
 
-Secrets are encrypted at rest and never appear in the build output or in
-`wrangler.jsonc`. Run each command and paste the key when prompted:
+In the import screen (or later under **Settings → Environment Variables**):
 
-```bash
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put ELEVENLABS_API_KEY
-```
+| Name | Value |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | your Anthropic key |
+| `ELEVENLABS_API_KEY` | your ElevenLabs key, if you have one |
+| `SOMNI_SIGNING_SECRET` | any long random string — `openssl rand -base64 32` |
 
-> The first deploy has to exist before secrets can attach to it. If Wrangler
-> complains that the Worker is not found, run step 5 first, then come back and
-> run these two commands, then deploy once more.
+That is the whole list. `SOMNI_SIGNING_SECRET` signs the cookie that records
+which cloned voices a browser made, so one visitor cannot delete another
+family's voice.
 
-## 4. Try it locally as a real Worker (optional, recommended)
+> **You do not need to set a site URL.** Vercel always provides
+> `VERCEL_PROJECT_PRODUCTION_URL`, and the app uses it as the base for the
+> share card. Set `NEXT_PUBLIC_SITE_URL` only if you are serving from a domain
+> that is not the project's production domain, or hosting somewhere else.
 
-`next dev` runs under Node. This runs the actual Worker build under `workerd`,
-which is what catches anything that only breaks in production.
+Leave all three applied to Production, Preview and Development.
 
-```bash
-cp .dev.vars.example .dev.vars   # then fill in the same two keys
-npm run preview
-```
+## 4. Deploy
 
-`.dev.vars` is the Worker equivalent of `.env.local` and is gitignored.
+Press Deploy. Vercel prints the live URL when it finishes — something like
+`somni-xxxx.vercel.app`.
 
-## 5. Deploy
+Every push to the default branch redeploys from here on.
 
-```bash
-npm run deploy
-```
+## 5. Put it on your own domain (optional)
 
-That builds Next, transforms it into a Worker, and uploads it. When it finishes
-Wrangler prints the live URL.
+**Settings → Domains → Add.** Vercel issues the certificate itself.
 
-## 6. Put it on your own domain (optional)
-
-If the domain is already on Cloudflare, add a route in the dashboard:
-
-**Workers & Pages → somni → Settings → Domains & Routes → Add → Custom domain**
-
-Cloudflare creates the DNS record and issues the certificate itself.
+Do this **before** anyone installs the app. An installed PWA is tied to its
+origin: moving domains later means every family's installs, saved stories,
+cached narration and voice-ownership cookies start from scratch. Adding the
+custom domain also updates `VERCEL_PROJECT_PRODUCTION_URL`, so the share card
+follows automatically on the next deploy.
 
 ---
 
-## Redeploying
+## Running it locally
 
 ```bash
-npm run deploy
+cp .env.example .env.local   # then fill in the keys
+npm run dev
 ```
 
-Secrets persist across deploys; you only set them once.
+To test the installable-app behaviour, build and serve it properly — the
+service worker is only registered in production builds:
+
+```bash
+npm run build && npm start
+```
+
+`localhost` counts as a secure context, so the install prompt behaves exactly as
+it will in production.
 
 ---
 
-## Running this for free
+## What this costs
 
-Somni fits the **Workers Free** plan: 100,000 Worker requests a day, 10 ms of
-CPU per request. Two things make that comfortable rather than tight.
+**The Hobby plan covers it.** Two things make that comfortable rather than
+tight.
 
-**Most requests never reach the Worker.** The app shell, fonts, CSS and JS are
-static assets, and Cloudflare states that "requests to static assets are free
-and unlimited" — they do not invoke the Worker or count against the request
-limit. Only `/api/*` calls do, which is a handful per story.
+**Most requests never run a function.** The app shell, fonts, CSS, JS and icons
+are static files served from the CDN. Only `/api/*` invokes a function, which is
+a handful of calls per story.
 
-**The API routes are almost entirely waiting, and waiting is not CPU.** Writing
-a story is minutes of Anthropic doing the work; narration is seconds of
-ElevenLabs doing it. Measured on a real three-page segment, the heaviest route
-spends about **1 ms** of actual CPU assembling its response. The 10 ms ceiling
-also has give: Cloudflare terminates a Worker that hits it *consistently*, not
-one that occasionally runs over.
+**Waiting is not billed as compute.** Vercel bills active CPU time, and
+explicitly excludes time spent waiting on I/O — which is almost the whole of a
+story request, since Anthropic is doing the work. Measured on a real three-page
+narration segment, the heaviest route spends about **1 ms** of actual CPU
+assembling its response.
 
-Two things would move you to Workers Paid ($5/month):
+**Function duration fits.** Writing a story with Opus takes two to three
+minutes. Hobby allows **300 seconds**, which is both its default and its
+maximum, and `src/app/api/story/route.ts` sets `maxDuration = 300` to use all of
+it. Pro raises the ceiling to 800s if you ever need it.
 
-- **Sharing it widely.** 100,000 requests a day is generous for a family and
-  irrelevant for a hobby project, but it is a real ceiling.
-- **A cold start that will not fit.** Workers cap Worker *startup* at 400 ms,
-  and a Next.js bundle is not small. If a deploy is rejected for startup time,
-  that is the message you will see, and it applies on both plans equally.
-
-If you do upgrade later, the one setting worth adding back is the CPU ceiling —
-`wrangler.jsonc` has it commented with the value.
-
-### What about Cloudflare Pages?
-
-Pages will not help. Pages Functions run on the same runtime with the same 10 ms
-CPU limit on the free plan, so there is nothing to gain, and Cloudflare is
-folding Pages' features into Workers rather than the other way round — Workers
-with static assets is now the recommended path for a full-stack app like this
-one. Existing Pages projects stay supported, but this is not one.
-
-`@cloudflare/next-on-pages`, the old Next.js-on-Pages adapter, is superseded by
-`@opennextjs/cloudflare`, which is what this project uses.
-
-### If you would rather not use Cloudflare at all
-
-Somni is plain Next.js, so **Vercel's Hobby plan** is free too and needs no
-adapter — push the repo, set the two environment variables, done. It suits the
-story route slightly better: Hobby allows the full 300 s function duration this
-app declares, and bills no per-request CPU limit at all. Two caveats: Hobby is
-licensed for non-commercial use only, and Vercel caps request bodies at 4.5 MB,
-which the voice-cloning upload could exceed if you record several long passages.
+The one thing that would move you to Pro: **Hobby is for non-commercial use.**
+If Somni ever charges anyone, that is the line.
 
 ---
 
 ## Configuration reference
 
-| Name | Where | Purpose |
-| --- | --- | --- |
-| `ANTHROPIC_API_KEY` | secret | Writes the stories. Required. |
-| `ELEVENLABS_API_KEY` | secret | Voice cloning and narration. Optional. |
-| `ELEVENLABS_TTS_MODEL` | plain var | Pin one voice model, overriding the app's Steady/Natural/Lively control. |
-| `ELEVENLABS_BASE_URL` | plain var | Regional endpoint, for EU/India/Singapore data residency. |
-
-Plain (non-secret) variables go in `wrangler.jsonc` under a `vars` block:
-
-```jsonc
-"vars": {
-  "ELEVENLABS_TTS_MODEL": "eleven_multilingual_v2"
-}
-```
+| Name | Purpose |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Writes the stories. Required. |
+| `ELEVENLABS_API_KEY` | Voice cloning and narration. Optional. |
+| `SOMNI_SIGNING_SECRET` | Signs the voice-ownership cookie. Falls back to the ElevenLabs key if unset. |
+| `NEXT_PUBLIC_SITE_URL` | Overrides the share-card base URL. Not needed on Vercel. |
+| `ELEVENLABS_TTS_MODEL` | Pin one voice model, overriding the app's Steady/Natural/Lively control. |
+| `ELEVENLABS_BASE_URL` | Regional endpoint, for EU/India/Singapore data residency. |
 
 ---
 
 ## Things worth knowing
 
-**Nothing is stored server-side.** Profiles, stories and narrated audio live in
-each visitor's own IndexedDB. There is no database to provision, which is why
-this deploy has no bindings beyond static assets. It also means the app is
-per-browser: the same person on a phone and a laptop has two separate shelves.
+**Nothing is stored server-side — with one exception.** Profiles, stories and
+narrated audio live in each visitor's own IndexedDB. There is no database to
+provision. It also means the app is per-browser: the same person on a phone and
+a laptop has two separate shelves.
 
-**The Worker is public.** Anyone who finds the URL can spend your Anthropic and
-ElevenLabs credit. If it is going anywhere beyond your own devices, put
-[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)
-in front of it — it sits at the edge and needs no application code.
+The exception is **cloned voices**, which live on your ElevenLabs account. Every
+visitor's clone lands on that one account, so a voice is only as private as that
+account is — worth knowing before the link goes anywhere public. Deleting a
+voice in the app deletes it at ElevenLabs too.
 
-**Story generation streams.** The route answers with a `text/event-stream`
-immediately and keeps sending progress while Opus works, so the response never
-looks stalled to anything in between. Workers place no wall-clock limit on a
-request while the client stays connected.
-
-**If you later add a server-rendered, revalidating route,** configure an
-incremental cache in [`open-next.config.ts`](open-next.config.ts) and create the
-R2 bucket it points at. Nothing in Somni needs one today. Adding any Cloudflare
-binding (R2, KV, D1) is also the point at which you want
-`initOpenNextCloudflareForDev()` in `next.config.ts`, so `next dev` can see the
-bindings too.
-
-**Bundle size.** Workers cap the compressed Worker at 3 MiB on the free plan and
-10 MiB on paid. Somni is currently around 1.1 MiB, so there is room on either.
-
-**Narration is sent as bytes, not JSON.** `/api/voice/speak` answers with a
-length-prefixed header followed by the raw mp3, rather than base64 inside JSON.
-That is a third less data over the wire, no base64 decoding on the phone, and
-about half the server CPU — which is part of what keeps this inside the free
-plan's budget.
+**Request and response bodies are capped at 4.5 MB.** This shapes two routes:
+voice recordings are limited to 4 MB in total on upload, and a narration segment
+is checked against the ceiling before it is returned. Both answer with a plain
+sentence rather than a platform error if they ever hit it.
 
 ---
 
-## Troubleshooting
+## After the first deploy: check the install prompt
 
-**`limits.cpu_ms is not supported on your plan`** — you have uncommented the
-`limits` block in `wrangler.jsonc` while on the free plan. Comment it out again;
-the defaults are fine.
+The app is a PWA, so phones offer to install it. Confirm it is working:
 
-**`Worker exceeded CPU time limit` in the logs** — if this is occasional,
-Cloudflare tolerates it. If it is every request, upgrade to Workers Paid and
-uncomment the `limits` block.
+```bash
+curl -i https://<your-domain>/manifest.webmanifest   # 200, application/manifest+json
+curl -i https://<your-domain>/sw.js                  # 200, and no long-lived cache
+```
 
-**Stories fail with a 503 saying the story writer is not connected** — the
-`ANTHROPIC_API_KEY` secret is missing on the deployed Worker. `.env.local` is a
-local-only file and is never uploaded. Run step 3.
+Then open the site on a phone, or in Chrome DevTools:
 
-**Voice cloning returns 403** — Instant Voice Cloning needs at least the
-ElevenLabs Starter plan. The app reports this rather than failing silently.
+- **DevTools → Application → Manifest** lists installability problems
+  explicitly. It should list none.
+- **Application → Service Workers** should show `sw.js` as *activated and
+  running*.
+- Android Chrome shows Somni's own install card a few seconds after the first
+  visit. iOS has no install API at all, so Safari gets a short instruction to
+  use Share → Add to Home Screen instead.
 
-**Logs** — `observability` is enabled in `wrangler.jsonc`, so requests and
-`console.error` output are visible under **Workers & Pages → somni → Logs**.
-For a live tail: `npx wrangler tail`.
+Two things that will waste an hour if you do not know them:
+
+- **A LAN address will not work.** `http://192.168.x.x:3000` is not a secure
+  context, so there is no manifest, no service worker and no prompt. Use
+  `npm run build && npm start`, or test on the deployed URL.
+- **It will not prompt twice.** Once Somni is installed on a device, the prompt
+  is gone. Uninstall it, or use a fresh browser profile, before testing again.
+
+---
+
+## Before sharing the link widely
+
+The API routes spend real money and are open to anyone who finds them. Nothing
+in the app limits that, so put the limits around it:
+
+1. **Spend caps at the providers.** Set a monthly budget in the Anthropic
+   console and a credit limit in ElevenLabs. This is the backstop that cannot be
+   argued with, and it takes five minutes.
+2. **A rate limit on `/api/*`.** Vercel's [Firewall](https://vercel.com/docs/vercel-firewall)
+   includes rate-limiting rules; a per-IP limit on `/api/*` is the one control
+   that stops a script before it reaches a function.
+3. **Watch the first few days.** Deployment → Logs shows requests live, and
+   Settings → Usage shows what they cost.
+
+For a private trial with family and friends,
+[Deployment Protection](https://vercel.com/docs/deployment-protection) in front
+of the project is simpler and stricter than any of the above.

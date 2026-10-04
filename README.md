@@ -3,7 +3,10 @@
 **A bedtime story app that writes a brand-new story every night and reads it aloud in your
 own voice.** Pick who is in it and where it happens, set your child's age, and Claude writes
 an original story tuned to that age — then it comes back narrated by a clone of you, lighting
-up each word as it is spoken. No account, no database, nothing stored on a server.
+up each word as it is spoken. No account, no database: your child's name, their stories and
+the narration audio live in your browser and are never uploaded. The one exception is the
+voice itself — cloning needs ElevenLabs, so those recordings are sent to them and the clone
+lives on their servers until you delete it.
 
 <p>
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
@@ -12,7 +15,7 @@ up each word as it is spoken. No account, no database, nothing stored on a serve
   <img alt="Tailwind" src="https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white">
   <img alt="Claude" src="https://img.shields.io/badge/Claude-Opus%205-D97757?logo=anthropic&logoColor=white">
   <img alt="ElevenLabs" src="https://img.shields.io/badge/ElevenLabs-voice%20cloning-1a1a1a">
-  <img alt="Cloudflare" src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white">
+  <img alt="Vercel" src="https://img.shields.io/badge/Vercel-deploy-000000?logo=vercel&logoColor=white">
 </p>
 
 ![Somni story builder](assets/main_screen.png)
@@ -155,7 +158,7 @@ to read a phrase to prove the voice is yours, which the app surfaces rather than
 | **ElevenLabs** | Instant Voice Cloning, and text-to-speech with character alignment |
 | **Web Audio** · **MediaRecorder** | recording, the live level meter, the noise-floor measurement |
 | **IndexedDB** | stories, profiles and cached narration, entirely client-side |
-| **Cloudflare Workers** via OpenNext | deployment — 1.1 MiB gzipped, runs on the free plan |
+| **Vercel** | deployment — stock Next.js, no adapter, runs on the free plan |
 
 ### Engineering notes
 
@@ -213,19 +216,22 @@ locally. `ELEVENLABS_TTS_MODEL=eleven_flash_v2_5` roughly halves it, at real cos
 
 ## Deploying
 
-Set up for **Cloudflare Workers** through the OpenNext adapter, and the free plan is enough —
-the app shell is static assets, which never invoke the Worker, and the API routes spend their
-time waiting on Anthropic and ElevenLabs rather than burning CPU. Full steps, and why
-Cloudflare Pages is not the free alternative it looks like, in [DEPLOY.md](DEPLOY.md).
+Deployed on **Vercel**, and the free Hobby plan is enough — the app shell is static files
+served from the CDN, and the API routes spend their time waiting on Anthropic and ElevenLabs
+rather than burning CPU, which Vercel does not bill. Writing a story takes two to three
+minutes and Hobby allows five. Full steps in [DEPLOY.md](DEPLOY.md).
 
-```bash
-npx wrangler login
-npx wrangler secret put ANTHROPIC_API_KEY
-npx wrangler secret put ELEVENLABS_API_KEY
-npm run deploy
+Import the repo at [vercel.com/new](https://vercel.com/new), add three environment variables,
+and deploy:
+
+```
+ANTHROPIC_API_KEY       your Anthropic key
+ELEVENLABS_API_KEY      your ElevenLabs key (optional)
+SOMNI_SIGNING_SECRET    any long random string
 ```
 
-Nothing in the app is Cloudflare-specific, so it still deploys to Vercel unchanged.
+Nothing in the app is host-specific — `src/` imports no platform SDK — so it runs anywhere
+Next.js does.
 
 ---
 

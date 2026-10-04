@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { decodeNarration } from "./audio";
+import { recycleAudioElement, takeAudioElement, unlockAudio } from "./audioUnlock";
 import { clipKey, clips as clipStore, type SavedClip } from "./storage";
 import {
   pageBoundary,
@@ -75,9 +76,7 @@ function releasePrepared(key: string) {
   const ready = prepared.get(key);
   if (!ready) return;
   prepared.delete(key);
-  ready.el.onerror = null;
-  ready.el.pause();
-  ready.el.removeAttribute("src");
+  recycleAudioElement(ready.el);
   URL.revokeObjectURL(ready.url);
 }
 
@@ -107,7 +106,8 @@ function overran(clip: SavedClip, el: HTMLAudioElement): boolean {
 /** An audio element with its metadata already loaded, ready to play at once. */
 async function decodeClip(clip: SavedClip, rate: number): Promise<{ el: HTMLAudioElement; url: string }> {
   const url = URL.createObjectURL(clip.audio);
-  const el = new Audio();
+  // Reuses an element unlocked during the play tap. See unlockAudio.
+  const el = takeAudioElement();
   el.preload = "auto";
   // Keep the voice's pitch when slowed down; Safari needs the prefix.
   el.preservesPitch = true;
@@ -122,6 +122,7 @@ async function decodeClip(clip: SavedClip, rate: number): Promise<{ el: HTMLAudi
     });
   } catch (err) {
     URL.revokeObjectURL(url);
+    recycleAudioElement(el);
     throw err;
   }
 
@@ -235,11 +236,7 @@ export function useNarrator({
     releasePrepared(readyKey);
 
     if (elementRef.current) {
-      elementRef.current.onended = null;
-      elementRef.current.onerror = null;
-      elementRef.current.pause();
-      elementRef.current.removeAttribute("src");
-      elementRef.current.load();
+      recycleAudioElement(elementRef.current);
       elementRef.current = null;
     }
     if (urlRef.current) {
@@ -407,6 +404,7 @@ export function useNarrator({
       let decoded = warm ?? (await decodeClip(clip, rateRef.current));
       if (runRef.current !== run) {
         if (!warm) URL.revokeObjectURL(decoded.url);
+        if (!warm) recycleAudioElement(decoded.el);
         return;
       }
 
@@ -416,11 +414,13 @@ export function useNarrator({
       if (!fresh && overran(clip, decoded.el)) {
         console.warn("[narrator] clip overran its alignment; regenerating");
         URL.revokeObjectURL(decoded.url);
+        recycleAudioElement(decoded.el);
         clip = await fetchClip(index, true);
         if (runRef.current !== run) return;
         decoded = await decodeClip(clip, rateRef.current);
         if (runRef.current !== run) {
           URL.revokeObjectURL(decoded.url);
+          recycleAudioElement(decoded.el);
           return;
         }
       }
@@ -430,10 +430,10 @@ export function useNarrator({
 
       // Chaining into the next segment replaces the element, so let go of the
       // last one rather than leaving its blob URL alive for the whole story.
-      if (elementRef.current) {
-        elementRef.current.onended = null;
-        elementRef.current.onerror = null;
-        elementRef.current.pause();
+      // It goes back to the pool: it is unlocked, and the seam after this one
+      // will need an element that already is.
+      if (elementRef.current && elementRef.current !== el) {
+        recycleAudioElement(elementRef.current);
       }
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
 
@@ -455,6 +455,25 @@ export function useNarrator({
       const found = timing.findIndex((entry) => entry.page === fromPage);
       const at = found === -1 ? 0 : found;
       el.currentTime = timing[at].start;
+
+      /*
+       * State follows the element, not the last command we issued.
+       *
+       * iOS pauses playback for an incoming call, an app switch or a headset
+       * being pulled out, and nothing here is told. Reading it back off the
+       * element means the control always shows what is actually happening, and
+       * a tap after an interruption resumes instead of doing nothing.
+       */
+      el.onpause = () => {
+        if (runRef.current !== run || el.ended) return;
+        cancelFrame();
+        setState("paused");
+      };
+      el.onplaying = () => {
+        if (runRef.current !== run) return;
+        setState("playing");
+        follow(run);
+      };
 
       el.onended = () => {
         if (runRef.current !== run) return;
@@ -505,6 +524,7 @@ export function useNarrator({
               // Leave it be. Playing this segment will fetch again and take the
               // regeneration path, where there is a listener to warn.
               URL.revokeObjectURL(decoded.url);
+              recycleAudioElement(decoded.el);
               return;
             }
             prepared.set(readyKey, { index: next, clip: upcoming, ...decoded });
@@ -593,6 +613,10 @@ export function useNarrator({
 
   const play = useCallback(
     async (index: number, fresh = false) => {
+      // First, before anything is awaited: this still runs inside the tap that
+      // called it, which is the only moment iOS will let an element be unlocked.
+      unlockAudio();
+
       if (index < 0 || index >= pages.length) return;
       setError(null);
 
@@ -665,9 +689,15 @@ export function useNarrator({
   );
 
   const pause = useCallback(() => {
-    if (elementRef.current && !elementRef.current.paused) {
+    const el = elementRef.current;
+    if (el) {
       cancelFrame();
-      elementRef.current.pause();
+      // Note this runs even when the element is already paused. Something else
+      // may have paused it - an incoming call, a disconnected headset, a seam
+      // between segments - in which case our state is simply wrong, and the
+      // old early return left the button rendering "pause" over silence with
+      // nothing able to put it right.
+      if (!el.paused) el.pause();
       setState("paused");
       return;
     }
@@ -678,10 +708,26 @@ export function useNarrator({
   }, [cancelFrame]);
 
   const resume = useCallback(() => {
-    if (elementRef.current?.paused) {
-      void elementRef.current.play();
-      setState("playing");
-      follow(runRef.current);
+    const el = elementRef.current;
+    if (el) {
+      // Reached from a tap, so the pool can be topped up here too.
+      unlockAudio();
+      const run = runRef.current;
+      el.play().then(
+        () => {
+          if (runRef.current !== run) return;
+          setState("playing");
+          follow(run);
+        },
+        () => {
+          // A rejected play() is almost always a browser refusing autoplay, not
+          // a broken clip. Falling back to "paused" leaves a button that works
+          // on the next tap, where an unhandled rejection used to put a raw
+          // DOMException under the story.
+          if (runRef.current !== run) return;
+          setState("paused");
+        },
+      );
       return;
     }
     if (typeof speechSynthesis !== "undefined" && speechSynthesis.paused) {
