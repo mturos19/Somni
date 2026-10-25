@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import { MAX_AGE, MIN_AGE, ageSpec, estimatedMinutes } from "@/lib/age";
 
 const AGES = Array.from({ length: MAX_AGE - MIN_AGE + 1 }, (_, i) => MIN_AGE + i);
@@ -9,7 +11,8 @@ const AGES = Array.from({ length: MAX_AGE - MIN_AGE + 1 }, (_, i) => MIN_AGE + i
  * how much tension the story is allowed to carry, so the summary underneath
  * shows the parent what they are actually choosing.
  */
-export function AgeDial({
+/** Memoised: eleven buttons and a slider, and nothing here changes while a name is typed. */
+export const AgeDial = memo(function AgeDial({
   age,
   onChange,
 }: {
@@ -103,7 +106,7 @@ export function AgeDial({
       </dl>
     </section>
   );
-}
+});
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (

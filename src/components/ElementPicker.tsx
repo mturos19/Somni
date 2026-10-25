@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import { ELEMENT_GROUPS, type GroupId } from "@/lib/elements";
 
 export type Selection = Record<GroupId, string[]>;
@@ -16,7 +18,8 @@ export const EMPTY_SELECTION: Selection = {
  * treated by the prompt as the most important instruction of all, so a parent
  * is never boxed in by the catalogue.
  */
-export function ElementPicker({
+/** Memoised: forty chips and a textarea, and nothing here changes while a name is typed. */
+export const ElementPicker = memo(function ElementPicker({
   selection,
   onChange,
   custom,
@@ -164,4 +167,4 @@ export function ElementPicker({
       </div>
     </section>
   );
-}
+});

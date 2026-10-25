@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 /**
  * Decorative night sky. Positions come from a seeded generator rather than
@@ -19,7 +19,19 @@ function seeded(seed: number) {
  * count is a direct trade against how smooth everything in front of it feels on
  * a phone. Forty-four reads as a sky; seventy read as a warm battery.
  */
-export function StarField({ count = 44, seed = 7 }: { count?: number; seed?: number }) {
+/**
+ * Memoised, and the props are plain numbers so it genuinely never re-renders.
+ * Without this the forty-four stars were reconciled on every keystroke in the
+ * child's name - the most expensive thing on screen, redrawn for something it
+ * knows nothing about.
+ */
+export const StarField = memo(function StarField({
+  count = 44,
+  seed = 7,
+}: {
+  count?: number;
+  seed?: number;
+}) {
   const stars = useMemo(() => {
     const rand = seeded(seed);
     return Array.from({ length: count }, (_, i) => ({
@@ -61,4 +73,4 @@ export function StarField({ count = 44, seed = 7 }: { count?: number; seed?: num
       />
     </div>
   );
-}
+});

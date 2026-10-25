@@ -6,6 +6,18 @@ import type { NextConfig } from "next";
  * Next's own `headers()` is the portable place for these: it is part of the
  * build output, so it applies the same whichever platform serves the app.
  */
+
+/**
+ * React's development build uses eval() - for hot reloading, and to rebuild
+ * callstacks that crossed the server/client boundary. Under `next dev` a policy
+ * without 'unsafe-eval' breaks those outright, which is a console error on
+ * every page load and no working error overlay.
+ *
+ * It is scoped strictly to development. React never uses eval() in a production
+ * build, so the shipped policy stays tight.
+ */
+const isDev = process.env.NODE_ENV === "development";
+
 const securityHeaders = [
   // The app is never meant to be framed; an embedded copy is someone else's
   // page wearing Somni's face. `frame-ancestors` is the modern form and is
@@ -26,7 +38,7 @@ const securityHeaders = [
       // Next inlines a small bootstrap and React injects style attributes;
       // both need 'unsafe-inline' here, and neither accepts a nonce without
       // making every response dynamic.
-      "script-src 'self' 'unsafe-inline'",
+      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
       "style-src 'self' 'unsafe-inline'",
       // next/font/google downloads Fraunces and Nunito at build time and serves
       // them from /_next/static/media, so nothing is fetched from Google at
@@ -35,7 +47,8 @@ const securityHeaders = [
       // Narration arrives as a blob and is played from an object URL.
       "img-src 'self' data: blob:",
       "media-src 'self' blob:",
-      "connect-src 'self'",
+      // `ws:` is the dev server's hot-reload socket, and nothing else.
+      `connect-src 'self'${isDev ? " ws: http://localhost:*" : ""}`,
       "worker-src 'self'",
       "manifest-src 'self'",
       "base-uri 'self'",

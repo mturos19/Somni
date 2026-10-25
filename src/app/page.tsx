@@ -120,10 +120,20 @@ export default function Home() {
     };
   }, []);
 
-  // Persist the profile whenever it settles, but not before it has loaded.
+  /*
+   * Persist the profile once it settles, not on every change.
+   *
+   * "Settles" is the point: this effect depends on `profile`, and the child's
+   * name is a controlled input, so without the delay every single keystroke
+   * opened an IndexedDB transaction - five letters, five writes, each one
+   * landing in the middle of the keypress after it. There is nothing to gain
+   * from saving a half-typed name, and a parent typing on a phone feels every
+   * one of those.
+   */
   useEffect(() => {
     if (!hydrated) return;
-    void profileStore.save(profile);
+    const id = setTimeout(() => void profileStore.save(profile), 400);
+    return () => clearTimeout(id);
   }, [profile, hydrated]);
 
   /**
@@ -175,6 +185,14 @@ export default function Home() {
     (patch: Partial<ChildProfile>) => setProfile((p) => ({ ...p, ...patch })),
     [],
   );
+
+  // Stable identities, so the memoised pickers below actually stay put.
+  const setAge = useCallback((age: number) => updateProfile({ age }), [updateProfile]);
+  const setThemeId = useCallback(
+    (themeId: string) => updateProfile({ themeId }),
+    [updateProfile],
+  );
+  const surprise = useCallback(() => setSelection(randomSelection()), []);
 
   async function createStory() {
     setBusy(true);
@@ -421,19 +439,22 @@ export default function Home() {
             )}
           </section>
 
-          <AgeDial age={profile.age} onChange={(age) => updateProfile({ age })} />
+          {/*
+            The handlers below are all useCallback'd. An inline arrow here
+            would be a new prop on every render and would defeat the memo on
+            each of these components entirely - which is the whole point, since
+            none of them care about the name being typed above.
+          */}
+          <AgeDial age={profile.age} onChange={setAge} />
 
-          <ThemePicker
-            themeId={profile.themeId}
-            onChange={(themeId) => updateProfile({ themeId })}
-          />
+          <ThemePicker themeId={profile.themeId} onChange={setThemeId} />
 
           <ElementPicker
             selection={selection}
             onChange={setSelection}
             custom={custom}
             onCustomChange={setCustom}
-            onSurprise={() => setSelection(randomSelection())}
+            onSurprise={surprise}
           />
         </div>
 

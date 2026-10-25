@@ -537,6 +537,19 @@ export function VoiceStudio({
     totalSeconds >= MIN_CLONE_SECONDS &&
     voiceName.trim().length > 0;
 
+  /** Why the button is greyed out, in the order a parent works through it. */
+  const blockedReason = !available
+    ? "Voice cloning is not switched on for this copy of Somni."
+    : !consent
+      ? "Tick the box above to confirm the voice is yours."
+      : recordedCount === 0
+        ? "Record at least one passage first."
+        : totalSeconds < MIN_CLONE_SECONDS
+          ? `That is only ${totalSeconds} seconds. Record about ${MIN_CLONE_SECONDS - totalSeconds} more for a clone that sounds like you.`
+          : voiceName.trim().length === 0
+            ? "Give the voice a name."
+            : null;
+
   async function createVoice() {
     if (!canClone) return;
     setCloning(true);
@@ -987,11 +1000,27 @@ export function VoiceStudio({
                 type="button"
                 onClick={() => void createVoice()}
                 disabled={!canClone || cloning || !available}
+                aria-describedby={blockedReason ? "clone-blocked" : undefined}
                 className="rounded-full px-6 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40"
                 style={{ background: "var(--accent)", color: "var(--accent-ink)" }}
               >
                 {cloning ? "Creating your voice..." : "Create my voice"}
               </button>
+
+              {/*
+                A greyed-out button with no explanation is just a dead end: the
+                four things it waits on are spread across the whole sheet, and
+                the one it is actually waiting on is rarely the one in view.
+              */}
+              {blockedReason && (
+                <p
+                  id="clone-blocked"
+                  className="w-full text-xs"
+                  style={{ color: "var(--accent-2)" }}
+                >
+                  {blockedReason}
+                </p>
+              )}
               <div className="min-w-[220px] flex-1 text-xs">
                 {recordedCount === 0 ? (
                   <span className="ink-soft">

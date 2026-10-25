@@ -1,5 +1,7 @@
 "use client";
 
+import { memo } from "react";
+
 import { THEMES } from "@/lib/themes";
 
 /**
@@ -7,7 +9,8 @@ import { THEMES } from "@/lib/themes";
  * about the child, so a kid who wants rocket-blue or blossom-pink just picks it.
  * Selecting one repaints the whole app immediately.
  */
-export function ThemePicker({
+/** Memoised: four tiles, and nothing here changes while a name is typed. */
+export const ThemePicker = memo(function ThemePicker({
   themeId,
   onChange,
 }: {
@@ -59,4 +62,4 @@ export function ThemePicker({
       </div>
     </section>
   );
-}
+});
