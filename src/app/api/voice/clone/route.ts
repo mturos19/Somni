@@ -4,6 +4,7 @@ import {
   requireKey,
   toFriendlyError,
 } from "@/lib/elevenlabs";
+import { LIMITS, rateLimit, tooManyRequests } from "@/lib/rateLimit";
 import { grantVoice } from "@/lib/voiceOwnership";
 
 export const runtime = "nodejs";
@@ -36,6 +37,13 @@ const NOISE_FLOOR_LIMIT = 0.02;
  * endpoint cannot be driven without it.
  */
 export async function POST(request: Request) {
+  // Before the multipart body is parsed: these requests carry megabytes, and
+  // each one that succeeds leaves a voice on an account with a voice ceiling.
+  const quota = rateLimit(request, "clone", LIMITS.clone);
+  if (!quota.ok) {
+    return tooManyRequests(quota.retryAfter, "That is a lot of voices at once.");
+  }
+
   try {
     const key = requireKey();
 

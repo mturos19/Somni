@@ -8,6 +8,7 @@ import {
   buildStoryPrompt,
 } from "@/lib/story";
 import { ageSpec } from "@/lib/age";
+import { LIMITS, rateLimit, tooManyRequests } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 // Opus with adaptive thinking takes its time on a creative brief. The response
@@ -76,6 +77,13 @@ function isRetryable(err: unknown): boolean {
  * deciding the request has stalled.
  */
 export async function POST(request: Request) {
+  // First, before the body is even read. This is the most expensive route in
+  // the app and the only thing standing between an open endpoint and a bill.
+  const quota = rateLimit(request, "story", LIMITS.story);
+  if (!quota.ok) {
+    return tooManyRequests(quota.retryAfter, "That is a lot of stories at once.");
+  }
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return fail(
       503,

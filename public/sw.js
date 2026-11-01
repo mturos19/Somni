@@ -17,9 +17,27 @@
  * response, so `/api/*` is passed through untouched - see `shouldHandle`.
  */
 
-const VERSION = "somni-v1";
-const SHELL = `${VERSION}-shell`;
-const RUNTIME = `${VERSION}-runtime`;
+/*
+ * The version comes from the URL this worker was registered at - the page asks
+ * for `/sw.js?v=<build id>`; see ServiceWorkerManager.tsx.
+ *
+ * It used to be the hardcoded string "somni-v1", which quietly broke the one
+ * thing `activate` exists to do. That handler deletes every cache whose name
+ * does not start with VERSION, so with VERSION never changing it never deleted
+ * anything - while `cacheFirst` kept adding each deploy's content-hashed
+ * bundles under new URLs. Twenty deploys meant twenty builds of the app sitting
+ * on a parent's phone, none of them reachable, none of them ever collected.
+ *
+ * Keyed to the build, the caches are wiped on the first load after each deploy.
+ * That does cost one network fetch for assets that may not have changed, which
+ * is the right trade: almost everything under /_next/static is content-hashed,
+ * so a new build has new URLs for it anyway.
+ */
+const VERSION =
+  new URL(self.location.href).searchParams.get("v") || "unversioned";
+const PREFIX = `somni-${VERSION}`;
+const SHELL = `${PREFIX}-shell`;
+const RUNTIME = `${PREFIX}-runtime`;
 
 /** The least that has to be present for the app to open with no network. */
 const PRECACHE = ["/", "/icons/icon-192.png", "/icons/icon-512.png"];
@@ -41,7 +59,7 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const names = await caches.keys();
       await Promise.all(
-        names.filter((name) => !name.startsWith(VERSION)).map((name) => caches.delete(name)),
+        names.filter((name) => !name.startsWith(PREFIX)).map((name) => caches.delete(name)),
       );
       await self.clients.claim();
     })(),

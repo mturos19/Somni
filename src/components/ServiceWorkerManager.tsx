@@ -11,9 +11,9 @@ import { useEffect } from "react";
  *
  * Development is deliberately excluded: `next dev` serves modules that are not
  * content-hashed the way a build's are, and a worker caching those fights hot
- * reloading. To try the install card locally, run `npm run preview` - that is
- * the real Worker build, and `localhost` counts as a secure context, so the
- * prompt behaves exactly as it will in production.
+ * reloading. To try the install card locally, run `npm run build && npm start` -
+ * `localhost` counts as a secure context, so the prompt behaves exactly as it
+ * will in production.
  */
 export function ServiceWorkerManager() {
   useEffect(() => {
@@ -37,9 +37,22 @@ export function ServiceWorkerManager() {
 
     void (async () => {
       try {
-        const registration = await navigator.serviceWorker.register("/sw.js", {
-          scope: "/",
-        });
+        /*
+         * The build id travels in the query string, which is how the worker
+         * learns what to name its caches - see the note at the top of sw.js.
+         *
+         * A query string is part of a worker's script URL but not of its scope,
+         * so each deploy asks to register a *different* script at the same
+         * scope `/`. That is exactly an update: the browser installs the new
+         * worker and discards the old one, rather than leaving two registered.
+         */
+        const version = encodeURIComponent(
+          process.env.NEXT_PUBLIC_BUILD_ID ?? "unversioned",
+        );
+        const registration = await navigator.serviceWorker.register(
+          `/sw.js?v=${version}`,
+          { scope: "/" },
+        );
 
         // A worker already waiting from a previous visit: let it through now
         // rather than on some future tab close.

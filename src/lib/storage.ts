@@ -12,16 +12,19 @@ import type { PageTiming } from "./narration";
 const DB_NAME = "somni";
 /**
  * v2 replaced the per-page audio blobs with per-segment clips that also carry
- * word timings; v3 added the voice mode to the clip key. Cached narration is
- * always re-creatable from the story, so each upgrade drops the old store
- * rather than trying to migrate it.
+ * word timings; v3 added the voice mode to the clip key; v4 added the sidecar
+ * index that makes narration evictable. Cached narration is always re-creatable
+ * from the story, so each upgrade drops the old store rather than trying to
+ * migrate it.
  */
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export const STORES = {
   profiles: "profiles",
   stories: "stories",
   clips: "clips",
+  /** Size and last use per clip. See clipMeta. */
+  clipMeta: "clipmeta",
   voices: "voices",
 } as const;
 
@@ -81,10 +84,16 @@ function openDb(): Promise<IDBDatabase> {
         store.createIndex("createdAt", "createdAt");
       }
       if (db.objectStoreNames.contains("audio")) db.deleteObjectStore("audio");
+      // Clips and their index are dropped together: an index that disagrees
+      // with the store it describes is worse than no index.
       if (db.objectStoreNames.contains(STORES.clips)) {
         db.deleteObjectStore(STORES.clips);
       }
+      if (db.objectStoreNames.contains(STORES.clipMeta)) {
+        db.deleteObjectStore(STORES.clipMeta);
+      }
       db.createObjectStore(STORES.clips);
+      db.createObjectStore(STORES.clipMeta);
       if (!db.objectStoreNames.contains(STORES.voices)) {
         db.createObjectStore(STORES.voices, { keyPath: "voiceId" });
       }
@@ -249,24 +258,149 @@ export const clipKey = (
   variant: string,
 ) => `${storyId}::${voiceId}::${variant}::${segment}`;
 
+/** What a cached clip costs, and when it was last wanted. See clipMeta. */
+type ClipMeta = { bytes: number; lastUsed: number };
+
+/**
+ * How much narration may sit in this browser before the least recently played
+ * is dropped.
+ *
+ * Narration is the only thing here that is large *and* re-creatable. A ten-page
+ * story is four or five segments at roughly a megabyte each, and the cache key
+ * includes the voice, the mode and the name pronunciation - so one story a
+ * family keeps re-reading in two voices is five or six megabytes, and a year of
+ * bedtimes with nothing evicting is hundreds.
+ *
+ * That matters because of what fills up alongside it. Browsers give one origin
+ * a single quota, so narration growing without bound eventually takes the space
+ * a *story* needs - and a story is the thing with no copy anywhere else. Audio
+ * can always be generated again; the story cannot be written again.
+ *
+ * 250 MB is comfortably inside what every mobile browser grants an installed
+ * app, and holds something like forty stories' narration.
+ */
+const CLIP_BUDGET_BYTES = 250 * 1024 * 1024;
+
+/**
+ * Trimming goes to here rather than to the budget, so arriving at the ceiling
+ * does not mean a scan and a delete on every single put from then on.
+ */
+const CLIP_TRIM_TARGET = Math.floor(CLIP_BUDGET_BYTES * 0.8);
+
+function request<T>(req: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Drops the least recently played narration until the cache is back inside its
+ * budget.
+ *
+ * Reads the sidecar index, never the clips themselves - the whole point of
+ * keeping sizes in a separate store is that deciding what to evict must not
+ * mean loading two hundred megabytes of audio into memory to measure it.
+ */
+async function trimClips(): Promise<void> {
+  try {
+    const db = await openDb();
+    const read = db.transaction(STORES.clipMeta, "readonly").objectStore(STORES.clipMeta);
+    const [keys, metas] = await Promise.all([
+      request(read.getAllKeys()),
+      request<ClipMeta[]>(read.getAll()),
+    ]);
+
+    let total = 0;
+    for (const meta of metas) total += meta?.bytes ?? 0;
+    if (total <= CLIP_BUDGET_BYTES) return;
+
+    const oldest = keys
+      .map((key, i) => ({ key, meta: metas[i] }))
+      .filter((entry) => typeof entry.key === "string" && entry.meta)
+      .sort((a, b) => a.meta.lastUsed - b.meta.lastUsed);
+
+    const tx = db.transaction([STORES.clips, STORES.clipMeta], "readwrite");
+    const clipStore = tx.objectStore(STORES.clips);
+    const metaStore = tx.objectStore(STORES.clipMeta);
+
+    let dropped = 0;
+    for (const entry of oldest) {
+      if (total <= CLIP_TRIM_TARGET) break;
+      clipStore.delete(entry.key);
+      metaStore.delete(entry.key);
+      total -= entry.meta.bytes;
+      dropped += 1;
+    }
+
+    if (dropped > 0) {
+      console.info(`[storage] evicted ${dropped} cached narration segment(s)`);
+    }
+  } catch (err) {
+    // A cache that will not trim is a slow problem; a crash here is an
+    // immediate one. Let it grow and try again next time.
+    console.warn("[storage] could not trim narration", err);
+  }
+}
+
+/** Marks a clip as just played, which is what keeps it out of the next eviction. */
+async function touchClip(key: string): Promise<void> {
+  try {
+    const db = await openDb();
+    const tx = db.transaction(STORES.clipMeta, "readwrite");
+    const store = tx.objectStore(STORES.clipMeta);
+    const meta = await request<ClipMeta | undefined>(store.get(key));
+    if (!meta) return;
+    store.put({ ...meta, lastUsed: Date.now() }, key);
+  } catch {
+    /* losing a timestamp only risks evicting something slightly too early */
+  }
+}
+
 export const clips = {
-  get: (key: string) =>
-    safe(run<SavedClip | undefined>(STORES.clips, "readonly", (s) => s.get(key)), undefined),
-  put: (key: string, clip: SavedClip) =>
-    safe(run(STORES.clips, "readwrite", (s) => s.put(clip, key)), undefined),
+  async get(key: string): Promise<SavedClip | undefined> {
+    const clip = await safe(
+      run<SavedClip | undefined>(STORES.clips, "readonly", (s) => s.get(key)),
+      undefined,
+    );
+    // Deliberately not awaited: the reader is waiting on this clip, and the
+    // bookkeeping behind it is nobody's business but the next eviction's.
+    if (clip) void touchClip(key);
+    return clip;
+  },
+
+  async put(key: string, clip: SavedClip): Promise<void> {
+    try {
+      const db = await openDb();
+      const tx = db.transaction([STORES.clips, STORES.clipMeta], "readwrite");
+      tx.objectStore(STORES.clips).put(clip, key);
+      tx.objectStore(STORES.clipMeta).put(
+        { bytes: clip.audio.size, lastUsed: Date.now() } satisfies ClipMeta,
+        key,
+      );
+      await new Promise<void>((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    } catch (err) {
+      console.warn("[storage] could not cache narration", err);
+      return;
+    }
+    void trimClips();
+  },
+
   async clearStory(storyId: string) {
     try {
       const db = await openDb();
-      const tx = db.transaction(STORES.clips, "readwrite");
-      const store = tx.objectStore(STORES.clips);
-      const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-        const req = store.getAllKeys();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
+      const tx = db.transaction([STORES.clips, STORES.clipMeta], "readwrite");
+      const clipStore = tx.objectStore(STORES.clips);
+      const metaStore = tx.objectStore(STORES.clipMeta);
+      const keys = await request(clipStore.getAllKeys());
       for (const key of keys) {
         if (typeof key === "string" && key.startsWith(`${storyId}::`)) {
-          store.delete(key);
+          clipStore.delete(key);
+          metaStore.delete(key);
         }
       }
     } catch (err) {

@@ -1,7 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import { Fraunces, Nunito } from "next/font/google";
 import Script from "next/script";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
+import { siteUrl } from "@/lib/site";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -14,29 +17,6 @@ const nunito = Nunito({
   variable: "--font-nunito",
   subsets: ["latin"],
 });
-
-/**
- * Where this copy of Somni actually lives.
- *
- * Social scrapers will not follow a relative image path, so without an absolute
- * base the share card silently resolves to nothing - exactly at the moment it
- * matters most.
- *
- * On Vercel this needs no configuration: VERCEL_PROJECT_PRODUCTION_URL is
- * always set, at build time as well as at runtime, and holds the project's
- * production domain - the shortest custom domain if there is one, otherwise the
- * vercel.app name. Preview deployments get it too, so a share card previewed
- * from a branch still points at production rather than at a URL that will be
- * gone next week.
- *
- * NEXT_PUBLIC_SITE_URL overrides it, for self-hosting or for a domain that is
- * not yet the project's production one.
- */
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_PROJECT_PRODUCTION_URL
-    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
-    : "http://localhost:3000");
 
 const title = "Somni - bedtime stories in your voice";
 const description =
@@ -121,6 +101,26 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </Script>
         <ServiceWorkerManager />
         {children}
+        {/*
+          Field measurement, because nothing else in this project can see a real
+          phone. Everything known about how Somni performs was measured in a
+          headless browser on a desktop; what a four-year-old's parent actually
+          has is a mid-range Android that has been awake for nine hours, and the
+          cost of a backdrop-filter or an animated star is entirely a question
+          about that device.
+
+          Speed Insights reports Core Web Vitals from real sessions - INP above
+          all, which is the one that answers "does tapping this feel slow".
+          Analytics answers the only product question that matters before
+          launch: whether anyone finishes a story, and whether the install card
+          is ever accepted.
+
+          Both are cookieless and collect no personal data, and both serve their
+          script from this origin (/_vercel/*), so the Content-Security-Policy
+          in next.config.ts needs nothing added for them.
+        */}
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

@@ -39,9 +39,20 @@ const ANIMATED_STARS = 14;
 export const StarField = memo(function StarField({
   count = 44,
   seed = 7,
+  /**
+   * Whether anything in the sky moves.
+   *
+   * Set false behind the reader. That screen has the tightest frame budget in
+   * the app - a requestAnimationFrame loop following the audio clock, a word
+   * repainting its glow every few hundred milliseconds, and six backdrop-filter
+   * panels stacked over this - and a decorative twinkle has no business taking
+   * any of it. Held still, the whole field costs one paint and then nothing.
+   */
+  animate = true,
 }: {
   count?: number;
   seed?: number;
+  animate?: boolean;
 }) {
   const stars = useMemo(() => {
     const rand = seeded(seed);
@@ -60,7 +71,8 @@ export const StarField = memo(function StarField({
       {stars.map((star) => {
         // Spread the animated ones through the field rather than clustering
         // them in whichever corner the generator happened to fill first.
-        const twinkles = star.id % 3 === 0 && star.id / 3 < ANIMATED_STARS;
+        const twinkles =
+          animate && star.id % 3 === 0 && star.id / 3 < ANIMATED_STARS;
         return (
           <span
             key={star.id}
@@ -86,11 +98,17 @@ export const StarField = memo(function StarField({
       {/* A soft moon-glow anchoring the top corner. Promoted to its own layer
           so drifting it never repaints the blur underneath. */}
       <div
-        className="animate-drift absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl"
+        className={
+          animate
+            ? "animate-drift absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl"
+            : "absolute -right-24 -top-24 h-72 w-72 rounded-full blur-3xl"
+        }
         style={{
           background: "var(--glow)",
           opacity: 0.5,
-          willChange: "transform",
+          // Only worth promoting while it actually moves. A still layer asking
+          // for its own texture is memory spent on nothing.
+          ...(animate ? { willChange: "transform" } : {}),
         }}
       />
     </div>

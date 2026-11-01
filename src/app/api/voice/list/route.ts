@@ -1,4 +1,5 @@
 import { elevenLabsBase, errorResponse, requireKey, toFriendlyError } from "@/lib/elevenlabs";
+import { LIMITS, rateLimit, tooManyRequests } from "@/lib/rateLimit";
 import { owns } from "@/lib/voiceOwnership";
 
 export const runtime = "nodejs";
@@ -20,6 +21,11 @@ export const runtime = "nodejs";
  * proof of anything - see voiceOwnership.ts.
  */
 export async function DELETE(request: Request) {
+  const quota = rateLimit(request, "voice-delete", LIMITS.voiceDelete);
+  if (!quota.ok) {
+    return tooManyRequests(quota.retryAfter, "Too many deletions at once.");
+  }
+
   try {
     const key = requireKey();
 

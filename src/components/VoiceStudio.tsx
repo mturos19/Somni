@@ -675,8 +675,7 @@ export function VoiceStudio({
       className="fixed inset-0 z-50 overflow-y-auto outline-none"
     >
       <div
-        className="fixed inset-0 backdrop-blur-sm"
-        style={{ background: "rgba(0,0,0,0.55)" }}
+        className="scrim fixed inset-0"
         /*
          * Only dismisses while there is nothing to lose. Recordings live in
          * memory until the clone is made, so a stray tap in the gutter beside

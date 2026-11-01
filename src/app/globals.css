@@ -97,25 +97,84 @@ button {
   padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
 }
 
-/* The night sky every screen sits on. */
+/*
+ * The night sky every screen sits on.
+ *
+ * Deliberately not transitioned. This used to carry
+ * `transition: background 700ms ease`, which looks free and is not: gradients
+ * are background *images*, and no browser can interpolate or composite one, so
+ * every frame of those 700ms repainted the entire viewport - and then every
+ * glass panel above it, because their blur reads what is behind them. Changing
+ * theme is a deliberate tap, and arriving instantly is no worse than arriving
+ * softly over four seconds of repainting if a parent tries all four.
+ */
 .sky {
   background:
     radial-gradient(120% 80% at 50% 100%, var(--sky-3) 0%, transparent 60%),
     radial-gradient(100% 70% at 15% 0%, var(--sky-2) 0%, transparent 55%),
     linear-gradient(180deg, var(--sky-1) 0%, var(--sky-2) 100%);
-  transition: background 700ms ease;
 }
 
+/*
+ * Frosted panels, with the frosting reserved for machines that can afford it.
+ *
+ * `backdrop-filter` is usually the most expensive thing on a phone screen: the
+ * compositor has to read back everything behind the panel and blur it, and it
+ * redoes that whenever any of it changes. Six of these sit over the reader.
+ *
+ * What is actually behind them is a smooth gradient and some small dots, so a
+ * flat fill loses very little - but a 9% fill alone reads as nothing at all.
+ * Hence the two coats below: the same theme colour painted twice composites to
+ * roughly double the alpha (1-(1-a)^2), which is enough to read as a panel,
+ * without this file having to know what any theme set --card to.
+ *
+ * The blur comes back on a fine pointer, which is the closest thing CSS has to
+ * "a machine that is plugged in".
+ */
 .glass {
-  background: var(--card);
+  background-color: var(--card);
+  background-image: linear-gradient(var(--card), var(--card));
   border: 1px solid var(--border);
-  backdrop-filter: blur(14px);
 }
 
 .glass-strong {
-  background: var(--card-strong);
+  background-color: var(--card-strong);
+  background-image: linear-gradient(var(--card-strong), var(--card-strong));
   border: 1px solid var(--border);
-  backdrop-filter: blur(18px);
+}
+
+/*
+ * The veil behind a modal - the writing overlay, and the Voice Studio sheet.
+ *
+ * These matter more than the panels above, for two reasons. They cover the
+ * whole viewport rather than a card, and the writing one is on screen for the
+ * entire minute or two a story takes to come back - so a blur here is the
+ * compositor re-reading and re-blurring every pixel of the display, every
+ * frame, for the longest wait in the app.
+ *
+ * And it buys almost nothing: at 62% black there is nothing legible behind it
+ * to soften. The blur returns on a fine pointer with the fill lightened to
+ * match, where it is a nice touch that something can afford.
+ */
+.scrim {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .glass {
+    background-image: none;
+    backdrop-filter: blur(14px);
+  }
+
+  .glass-strong {
+    background-image: none;
+    backdrop-filter: blur(18px);
+  }
+
+  .scrim {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(12px);
+  }
 }
 
 .ink-soft {

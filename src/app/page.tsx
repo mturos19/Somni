@@ -293,7 +293,12 @@ export default function Home() {
   if (reading) {
     return (
       <div className="sky min-h-dvh" style={themeStyle(themeById(reading.themeId))}>
-        <StarField seed={11} count={36} />
+        {/*
+          Held still. See the `animate` note in StarField: the reader is the one
+          screen whose frames are already spoken for, and it is also the screen
+          with the most glass stacked over this.
+        */}
+        <StarField seed={11} count={36} animate={false} />
         <StoryReader
           saved={reading}
           voiceId={profile.voiceId}
@@ -315,7 +320,17 @@ export default function Home() {
 
   return (
     <div className="sky min-h-dvh" style={themeStyle(theme)}>
-      <StarField />
+      {/*
+        Still while something is covering it.
+
+        Both overlays are full-screen scrims, so every star under one is both
+        invisible and expensive: it goes on recalculating its own style each
+        frame, and on anything that can afford the blur it invalidates the whole
+        viewport's worth of it as well. The writing overlay is up for the entire
+        minute or two a story takes, which makes this the longest stretch of
+        wasted work anywhere in the app.
+      */}
+      <StarField animate={!busy && !studioOpen} />
 
       {/*
         Bottom clearance has to cover the sticky write button and, when it is
@@ -574,8 +589,7 @@ export default function Home() {
           role="dialog"
           aria-modal="true"
           aria-label="Writing your story"
-          className="fixed inset-0 z-40 flex flex-col items-center justify-center gap-6 px-6 outline-none backdrop-blur-md"
-          style={{ background: "rgba(0,0,0,0.5)" }}
+          className="scrim fixed inset-0 z-40 flex flex-col items-center justify-center gap-6 px-6 outline-none"
         >
           <div className="animate-breathe text-6xl">{"\u{2728}"}</div>
           {/*

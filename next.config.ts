@@ -18,6 +18,23 @@ import type { NextConfig } from "next";
  */
 const isDev = process.env.NODE_ENV === "development";
 
+/**
+ * A string that changes whenever what is deployed changes.
+ *
+ * The service worker names its caches after this, which is the only thing that
+ * makes its `activate` handler able to collect the previous deploy's bundles -
+ * see the note at the top of public/sw.js. It is inlined into the client bundle
+ * through `env` below, because the registration happens in the browser.
+ *
+ * The deployment id is preferred over the commit so that redeploying the same
+ * commit - after changing an environment variable, say - still counts as new.
+ * Locally there is neither, and the build's own timestamp does the job.
+ */
+const buildId =
+  process.env.VERCEL_DEPLOYMENT_ID ||
+  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ||
+  `local-${Date.now().toString(36)}`;
+
 const securityHeaders = [
   // The app is never meant to be framed; an embedded copy is someone else's
   // page wearing Somni's face. `frame-ancestors` is the modern form and is
@@ -61,6 +78,22 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_BUILD_ID: buildId,
+  },
+  /*
+   * Somni does not use next/image. Every image it has - the icons, the share
+   * card - is a fixed asset served straight from /public at a size chosen by
+   * hand, so the optimizer has nothing to do here.
+   *
+   * Turning it off closes /_next/image, which is otherwise a public,
+   * unauthenticated endpoint that decodes attacker-chosen image bytes. Three of
+   * the advisories fixed in the Next upgrade alongside this were exactly that.
+   * An endpoint the app never calls should not be reachable at all.
+   */
+  images: {
+    unoptimized: true,
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

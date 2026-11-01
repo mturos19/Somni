@@ -20,6 +20,7 @@ import {
   type SpeakHeader,
   type SpeakRequest,
 } from "@/lib/narration";
+import { LIMITS, rateLimit, tooManyRequests } from "@/lib/rateLimit";
 import { Buffer } from "node:buffer";
 
 export const runtime = "nodejs";
@@ -58,6 +59,13 @@ function frame(header: SpeakHeader, audio: Uint8Array): ArrayBuffer {
  * stitching the v2 models accept.
  */
 export async function POST(request: Request) {
+  // Narration is billed by the character, so this is counted before the body
+  // that says how many characters is read.
+  const quota = rateLimit(request, "speak", LIMITS.speak);
+  if (!quota.ok) {
+    return tooManyRequests(quota.retryAfter, "That is a lot of narration at once.");
+  }
+
   try {
     const key = requireKey();
 
